@@ -58,68 +58,67 @@ int main()
 	}
 	
 	sm->window = window;
-	volatile Query *q = sm->q;
-	volatile char *kv_buf = (volatile char*)(((ull)(sm->q + window) + ALIGN-1)/ALIGN*ALIGN);
+	volatile KV* volatile*kv = sm->kv;
 	
-	volatile_set(q, 0, sizeof(Query)*window);
-	for(int i = 0; i < window; i++) q[i].read_complete = 1;
+	for(int i = 0; i < window; i++) {
+		kv[i] = (KV*)((char*)(kv+window) + TEST_KV_SIZE*i);
+		kv[i]->len_key = 0; // len_key == 0 means read complete
+	}
 	
 	init_rand();
 	
-	for(int i = 
 	
 	int ACK = sm->ACK;
-	while(ACK == sm->ACK) sm->signal++;
+	while(ACK == sm->ACK) usleep(1000), sm->signal++;
 	
 	ll t1 = clock(), t2;
 	ll kv_sum = 0;
 	int turn = 1;
+	int n_wr = 0;
 	
-	for(int i = 1; ; i++) {
+	for(int id = 0; ; id = id+1==window ? 0 : id+1) {
 		
-		if(turn) {// PUT
-			for(int id = 0; id < batch; id++) {
-				q[id].type = REQ_PUT;
-				q[id].q_kv = (KV*)(kv_buf + TEST_KV_SIZE*id);
-				volatile KV *kv = q[id].q_kv;
-				kv->len_key = TEST_KEY_LEN;
-				kv->len_value = TEST_VALUE_LEN;
-				ull rd = new_rand();// to be writen
-				*(volatile ull*)kv->content = rd;
-				char byte = (char)rd;
-				volatile_set(kv->content + 8, byte, kv->len_key-8);// other bytes of key
-				volatile_set(kv->content + kv->len_key, byte, kv->len_value);// bytes of value
-			}
-		}
-		else {// GET
-			for(int id = 0; id < batch; id++) {
-				q[id].type = REQ_GET;
-				q[id].q_kv = (KV*)(kv_buf + TEST_KV_SIZE*id);
-				volatile KV *kv = q[id].q_kv;
-				kv->len_key = TEST_KEY_LEN;
-				kv->len_value = 0;
-				ull rd = old_rand();
-				*(volatile ull*)kv->content = rd;
-				char byte = (char)rd;
-				volatile_set(kv->content + 8, byte, kv->len_key-8);// other bytes of key
-			}
-		}
-		sm->query_complete = 0;
-		
-		if(unlikely(i*batch>=NITER)) {
-			kv_sum += i*batch;
+		if(unlikely(n_wr>=NITER)) {
+			kv_sum += n_wr;
 			t2 = clock();
 			double dt = 1.0*(t2 - t1)/CLOCKS_PER_SEC;
 			t1 = t2;
-			double tpt = 1e-6*NITER/dt;
+			double tpt = 1e-6*n_wr/dt;
 			printf("%.2lf MOPS (%s), %lld OPS IN TOTAL\n", tpt, turn?"PUT":"GET", kv_sum);
-			i = 0;
 			if(turn == 0)// next is a new round PUT-GET
 				raw ++, col = 0;
 			if(raw == NITER)
 				break;
 			turn ^= 1;
+			n_wr = 0;
+		}	
+		
+		if(kv[id]->len_key != 0) continue;
+		
+		//fence
+		
+		n_wr ++;
+		if(turn) {// PUT
+			kv[id]->len_value = TEST_VALUE_LEN;// if delete, len_value == -1
+			ull rd = new_rand();// to be writen
+			*(volatile ull*)kv[id]->content = rd;
+			char byte = (char)rd;
+			volatile_set(kv[id]->content + 8, byte, kv[id]->len_key-8);// other bytes of key
+			if(kv[id]->len_value != (us)-1)
+				volatile_set(kv[id]->content + kv[id]->len_key, byte, kv[id]->len_value);// bytes of value
+			// fence
+			kv[id]->len_key = TEST_KEY_LEN;
 		}
+		else {// GET
+			kv[id]->len_value = 0;
+			ull rd = old_rand();
+			*(volatile ull*)kv[id]->content = rd;
+			char byte = (char)rd;
+			volatile_set(kv[id]->content + 8, byte, kv[id]->len_key-8);// other bytes of key
+			
+			kv[id]->len_key = TEST_KEY_LEN;
+		}
+		
 	}
 	return 0;
 }

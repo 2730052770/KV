@@ -17,12 +17,16 @@
 #define treetag(x) (((uint*)&(x))[1]&0x7fffffff)
 #define buckettag(x) (((us*)&(x))[1]&(BUCKET_NUM-1))
 #define entrytag(x) (((us*)&(x))[0])
+
+#define TREE_TAG_MAX ((uint)-1) 
+
 #define REQ_GET 1
 #define REQ_PUT 2
 #define RESP_GET_SUCCESS 3
 #define RESP_PUT_SUCCESS 4
 #define RESP_GET_KEY_NOT_EXISTS 5
 #define RESP_DELETE_KEY_NOT_EXISTS 6
+#define NOT_COMPLETE(type) ((type) <= REQ_PUT)
 
 
 typedef long long ll;
@@ -65,6 +69,8 @@ const uint GROUP_SIZE[] = {
 	18432, 20480, 24576, 28672, 32768, 36864, 40960, 49152, 57344, 65536
 	*/
 };
+#define NO_GROUP ((uc)-1)
+
 const uint GROUP_NUM = sizeof(GROUP_SIZE)/sizeof(GROUP_SIZE[0]);// 32
 const uint JMP_START = GROUP_NUM/2;
 
@@ -94,7 +100,7 @@ struct Bucket_entry{//12
 
 #define ENTRY_TYPE_META 3
 #define ENTRY_TYPE_INUSE 1
-#define ENTRY_TYPE_TOMB 2
+//#define ENTRY_TYPE_TOMB 2
 #define ENTRY_TYPE_EMPTY 0
 
 const uint BUCKET_LEN = 10;     
@@ -154,14 +160,30 @@ struct Block{
 
 #define FATHER(ptr) (*(uint*)(ptr))
 
+
+#define FIND_EMPTY 1
+#define FIND_MATCH 2
+#define FIND_FULL 3
+
+
 struct Query{
-	uc type;// 1 GET, 2 PUT, 3 GET_SUC, 4 PUT_SUC, 
+	uc type;// 1 REQ_GET, 2 REQ_PUT, 3 GET_SUC, 4 PUT_SUC, 
 			// 5 GET_KEY_NOT_EXISTS, 6 DELETE_KEY_NOT_EXISTS
 	uc group;// only for PUT
-	bool read_complete;
-	uc unused[5];
+	uc entry_type;
+	uc unused;
+	uint entry_id;
+	Index *index;
+	union {
+		Node_entry *node_entry;
+		Bucket_entry *bucket_entry;
+	}entry;
+	uint tree_tag;
+	us bucket_tag;
+	us entry_tag;
 	KV *q_kv;// outer kv of query
-	Block *block;// inner block
+	Block *old_block;
+	Block *new_block;// inner block
 };
 
 struct Allocator {
