@@ -36,7 +36,6 @@ void init_tree()
 template<uint batch>
 void tree_search(Query *q)
 {
-	printf("step2\n");
 	
 	Node_entry *entry[batch];
 	uint tag[batch];
@@ -55,7 +54,6 @@ void tree_search(Query *q)
 		}
 	}
 	
-	printf("step3\n");
 	
 	for(uint lv = 1; lv < global_level; lv++) {// the nodes have $level different kind of hight
 		for(uint id = 0; id < batch; id++) {
@@ -73,7 +71,6 @@ void tree_search(Query *q)
 		}
 	}
 	
-	printf("step4\n");
 	
 	for(uint id = 0; id < batch; id++) {
 		Query *qy = q+id;
@@ -91,6 +88,7 @@ void (*tree_search_table[]) (Query *) = {
 	tree_search<5>, tree_search<6>, tree_search<7>, tree_search<8>
 };
 
+static int Cnt;
 
 template<uint batch>
 void first_bucket_search(uint n_put, Query *q)
@@ -138,7 +136,7 @@ void first_bucket_search(uint n_put, Query *q)
 				}
 				else {
 					qy->type = RESP_PUT_SUCCESS;
-					entry->type = 1;
+					entry->type = ENTRY_TYPE_INUSE;
 					entry->group = qy->group;
 					entry->tag = qy->entry_tag;
 					entry->tree_tag = qy->tree_tag;
@@ -150,9 +148,23 @@ void first_bucket_search(uint n_put, Query *q)
 				old_block = qy->old_block;
 				old_kv = &old_block->kv;
 				new_kv = qy->q_kv;
+				/*
+				if(qy->tree_tag == 1936946035) {
+					Cnt++;
+					if(Cnt==283) {
+						puts("breakp");
+					}
+					printf("find, %d\n", Cnt);
+				}
+				*/
 				if(old_kv->len_key == new_kv->len_key && 
 				   memcmp(old_kv->content, new_kv->content, old_kv->len_key) == 0) {
 					// if really match
+					/*
+					if(qy->tree_tag == 1936946035) {
+						puts("do match");
+					}
+					*/
 				   	qy->type = RESP_PUT_SUCCESS;
 				   	
 				   	ray_allocator[entry->group].free(old_block);
@@ -213,6 +225,11 @@ void second_bucket_search(uint n_op, Query *q)
 		entry = qy->entry.bucket_entry + 1;
 		uint tree_tag = qy->tree_tag;
 		us entry_tag = qy->entry_tag;
+		/*
+		if(tree_tag == 1936946035) {
+			printf("find!!!, %d\n", Cnt);
+		}
+		*/
 		uint col = qy->entry_id + 1;
 		for(; col < BUCKET_LEN; col++, entry++) {
 			if(entry->type == ENTRY_TYPE_EMPTY) {
@@ -222,7 +239,7 @@ void second_bucket_search(uint n_op, Query *q)
 					}
 					else {
 						qy->type = RESP_PUT_SUCCESS;
-						entry->type = 1;
+						entry->type = ENTRY_TYPE_INUSE;
 						entry->group = qy->group;
 						entry->tag = qy->entry_tag;
 						entry->tree_tag = qy->tree_tag;
@@ -282,7 +299,6 @@ void second_bucket_search(uint n_op, Query *q)
 
 void bucket_search(uint n_put, uint n_op, Query *q)
 {
-	printf("step5\n");
 	//你需要考虑：GET after PUT, PUT after same PUT, PUT after different PUT, PUT after DEL, DEL after PUT...
 	//不如直接BUCKET互斥
 	first_bucket_search_table[n_op](n_put, q);
@@ -375,6 +391,7 @@ void tree_insert(Node *ptr, uint tree_tag, uint old_offset, uint offset, uint le
 
 void index_split(Index *index, ull bucket_tag) {// tag is in the line which is full 
 
+	//puts("split");
 	// get mid_tag
 	uint line = bucket_tag;
 	Bucket_entry *entrys = index->bucket[line].entry;
@@ -405,7 +422,7 @@ void index_split(Index *index, ull bucket_tag) {// tag is in the line which is f
 			if(element > tree_tags[pos])
 				break;
 		if(pos == size) continue;
-		for(uint i = col; i > pos; i--)
+		for(uint i = size-1; i > pos; i--)
 			tree_tags[i] = tree_tags[i-1];
 		tree_tags[pos] = element;
 	}
@@ -473,9 +490,8 @@ uint solve(uint unsolved, Query *q)
 {
 	static int sum = 0;
 	static int cnt = 0;
-	if((++cnt & ((1<<20)-1)) == 0) printf("sum = %d\n",sum);
+	if((++cnt & ((1<<20)-1)) == 0) printf("sum = %d, level = %d\n",sum, global_level);
 	
-	printf("step1\n");
 	
 	for(uint id = 0; id < unsolved; id++) 
 		q[id].entry.node_entry = rt->entry;
@@ -578,7 +594,7 @@ int main()
 {
 	char global_kv_buf[MAX_BATCH*TEST_KV_SIZE];
 	Query q[MAX_BATCH];
-
+	memset(q, 0, sizeof(q));
 
 	init_allocators();
 	
@@ -612,12 +628,14 @@ int main()
 		volatile KV *kv = sm->kv[id];
 		if(kv->len_key == 0) continue;
 	
+		//__sync_synchronize();
 		//fence
 		Query *qy = q + num;
 		qy->type = kv->len_value==0 ? REQ_GET : REQ_PUT;
-		qy->q_kv = (KV*)(global_kv_buf + TEST_KV_SIZE*num);
+		if(!qy->q_kv) qy->q_kv = (KV*)(global_kv_buf + TEST_KV_SIZE*num);
 		volatile_cpy(qy->q_kv, kv, TEST_KV_SIZE);
 		
+		//__sync_synchronize();
 		//fence
 		
 		kv->len_key = 0;//

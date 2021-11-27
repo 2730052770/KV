@@ -2,7 +2,7 @@
 #include "test.h"
 
 const int NITER = 16384;
-const int window = 64;
+const int window = 16;
 ull rand_x[NITER], rand_y[NITER];// may produce 17GB KV
 int raw, col;
 
@@ -61,7 +61,7 @@ int main()
 	volatile KV* volatile*kv = sm->kv;
 	
 	for(int i = 0; i < window; i++) {
-		kv[i] = (KV*)((char*)(kv+window) + TEST_KV_SIZE*i);
+		kv[i] = (KV*)((char*)((TEST_KV*)kv+window) + TEST_KV_SIZE*i);
 		kv[i]->len_key = 0; // len_key == 0 means read complete
 	}
 	
@@ -96,6 +96,10 @@ int main()
 		if(kv[id]->len_key != 0) continue;
 		
 		//fence
+		//__sync_synchronize();
+		
+		
+		uc len_key = TEST_KEY_LEN;
 		
 		n_wr ++;
 		if(turn) {// PUT
@@ -103,21 +107,23 @@ int main()
 			ull rd = new_rand();// to be writen
 			*(volatile ull*)kv[id]->content = rd;
 			char byte = (char)rd;
-			volatile_set(kv[id]->content + 8, byte, kv[id]->len_key-8);// other bytes of key
+			volatile_set(kv[id]->content + 8, byte, len_key-8);// other bytes of key
 			if(kv[id]->len_value != (us)-1)
-				volatile_set(kv[id]->content + kv[id]->len_key, byte, kv[id]->len_value);// bytes of value
-			// fence
-			kv[id]->len_key = TEST_KEY_LEN;
+				volatile_set(kv[id]->content + len_key, byte, kv[id]->len_value);// bytes of value
+			
 		}
 		else {// GET
 			kv[id]->len_value = 0;
 			ull rd = old_rand();
 			*(volatile ull*)kv[id]->content = rd;
 			char byte = (char)rd;
-			volatile_set(kv[id]->content + 8, byte, kv[id]->len_key-8);// other bytes of key
-			
-			kv[id]->len_key = TEST_KEY_LEN;
+			volatile_set(kv[id]->content + 8, byte, len_key-8);// other bytes of key
 		}
+		//__sync_synchronize();
+		
+		kv[id]->len_key = len_key;
+		
+		//printf("%d\n",n_wr);
 		
 	}
 	return 0;
