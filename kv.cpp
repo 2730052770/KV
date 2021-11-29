@@ -23,7 +23,7 @@ void init_tree()
 	rt = (Node*)node_allocator->allocate();
 	rt->father = 0;// type of father is unsigned int
 	for(uint i = 1; i < FORK_NUM; i++)
-		rt->entry[i].tag = TREE_TAG_MAX;// maximum and invalid
+		rt->entry[i].tag = TREE_TAG_INF;// maximum and invalid
 		
 	Index *t = (Index*)index_allocator->allocate();
 	memset(t, 0, index_allocator->obj_size);
@@ -62,13 +62,28 @@ void tree_search(Query *q)
 			__builtin_prefetch(entry[id], 0, 0);
 		}
 		
-		for(uint jmp = FORK_NUM>>1; jmp; jmp>>=1) {//  now in level $lv, choose a son
+		for(uint jmp = FORK_NUM>>1; jmp; jmp>>=1) {//  now in level $lv, choose a son	// WE CAN SWAP THESE TWO AND PUT PREFETCH IN IT !!!
 			for(uint id = 0; id < batch; id++) { 
 				Node_entry * nxt = entry[id] + jmp;
 				if(tag[id] >= nxt->tag)
 					entry[id] = nxt;
 			}
 		}
+		/*
+		
+		for(uint id = 0; id < batch; id++) {//  now in level $lv, choose a son	// WE CAN SWAP THESE TWO AND PUT PREFETCH IN IT !!!
+			for(uint jmp = FORK_NUM>>1; jmp; jmp>>=1) { 
+				Node_entry * nxt = entry[id] + jmp;
+				if(tag[id] >= nxt->tag)
+					entry[id] = nxt;
+			}
+			if(lv < global_level-1) {
+				Node *son = (Node*)NODE_BASE + entry[id]->offset;
+				entry[id] = son->entry;// to be jump to level $lv
+				__builtin_prefetch(entry[id], 0, 0);
+			}
+		}
+		*/
 	}
 	
 	
@@ -88,10 +103,8 @@ void (*tree_search_table[]) (Query *) = {
 	tree_search<5>, tree_search<6>, tree_search<7>, tree_search<8>
 };
 
-static int Cnt;
-
 template<uint batch>
-void first_bucket_search(uint n_put, Query *q)
+void first_bucket_search(uint n_put, Query *q)//							THE TEMPLATE MAY NOT BE USEFUL
 {
 	//这里还可以尝试换换两个循环的顺序，需要一些技巧跳过已经查完的
 	//这里我可以手动展开+跳转实现对变长的支持,先摆烂
@@ -141,10 +154,18 @@ void first_bucket_search(uint n_put, Query *q)
 					entry->tag = qy->entry_tag;
 					entry->tree_tag = qy->tree_tag;
 					entry->offset = qy->new_block->offset;
+					/*
+					if(*(ull*)qy->q_kv->content == 13124069031439191547ull) {
+						printf("factual addr = %llx\n", (ull)ID2BLOCK(entry->offset, entry->group));
+					}
+					*/
 					qy->new_block->father = INDEX_ID(qy->index);
 				}
 				break;
 			case FIND_MATCH:// PUT/DELETE match
+			
+				//puts("a put-tag-match");
+			
 				old_block = qy->old_block;
 				old_kv = &old_block->kv;
 				new_kv = qy->q_kv;
@@ -159,6 +180,9 @@ void first_bucket_search(uint n_put, Query *q)
 				*/
 				if(old_kv->len_key == new_kv->len_key && 
 				   memcmp(old_kv->content, new_kv->content, old_kv->len_key) == 0) {
+				   
+				   	//puts("a inplace-put");
+				   
 					// if really match
 					/*
 					if(qy->tree_tag == 1936946035) {
@@ -204,6 +228,14 @@ void first_bucket_search(uint n_put, Query *q)
 					// if really match
 				   	qy->type = RESP_GET_SUCCESS;
 				}
+				/*
+				else {
+					puts("a get tag match but miss");
+					if(treetag(*(ull*)old_kv->content) != qy->entry.bucket_entry->tree_tag)
+						printf("unexpected modify, old_block addr = %llx\n", (ull)qy->old_block);
+					printf("%llu %llu\n", *(ull*)old_kv->content, *(ull*)qy->q_kv->content);
+				}
+				*/
 				break;
 		}
 	}
@@ -221,6 +253,9 @@ void second_bucket_search(uint n_op, Query *q)
 	Bucket_entry *entry;
 	
 	for(uint id = 0; id < n_op; id++) if(NOT_COMPLETE(q[id].type) && q[id].entry_type == FIND_MATCH){ // PUT
+	
+		//puts("an KV enter second_search");
+	
 		qy = q+id;
 		entry = qy->entry.bucket_entry + 1;
 		uint tree_tag = qy->tree_tag;
@@ -308,14 +343,14 @@ void bucket_search(uint n_put, uint n_op, Query *q)
 void tree_insert(Node *ptr, uint tree_tag, uint old_offset, uint offset, uint leaf)
 {
 	uint pos, cnt;
-	for(cnt = 0; cnt < FORK_NUM; cnt++) {
-		if(ptr->entry[cnt].offset == old_offset) {
-			pos = cnt + 1;
-		}
-		if(ptr->entry[cnt].tag == TREE_TAG_MAX)
+	for(pos = cnt = 1; cnt < FORK_NUM; cnt++) {
+		if(ptr->entry[cnt].tag == TREE_TAG_INF) // these 2 "if" can not change order
 			break; 
+		if(ptr->entry[cnt].offset == old_offset) 
+			pos = cnt + 1;			// if pos has not been assigned here, then pos = 1;
 	}
 	if(cnt < FORK_NUM) {
+		//puts("normal");
 		for(uint i = cnt; i > pos; i--)
 			ptr->entry[i] = ptr->entry[i-1];
 		ptr->entry[pos].tag = tree_tag;
@@ -358,9 +393,9 @@ void tree_insert(Node *ptr, uint tree_tag, uint old_offset, uint offset, uint le
 			}
 		}
 		for(uint i = half+1; i < FORK_NUM; i++)
-			ptr->entry[i].tag = TREE_TAG_MAX;
+			ptr->entry[i].tag = TREE_TAG_INF;
 		for(uint i = half; i < FORK_NUM; i++)
-			new_ptr->entry[i].tag = TREE_TAG_MAX;
+			new_ptr->entry[i].tag = TREE_TAG_INF;
 		
 		// son -> new father
 		uint new_id = NODE_ID(new_ptr);
@@ -379,7 +414,7 @@ void tree_insert(Node *ptr, uint tree_tag, uint old_offset, uint offset, uint le
 			rt->entry[1].tag = mid_tag;
 			rt->entry[1].offset = new_id;
 			for(uint i = 2; i < FORK_NUM; i++)
-				rt->entry[i].tag = TREE_TAG_MAX;
+				rt->entry[i].tag = TREE_TAG_INF;
 		}
 		else{
 			new_ptr->father = ptr->father;
@@ -389,8 +424,14 @@ void tree_insert(Node *ptr, uint tree_tag, uint old_offset, uint offset, uint le
 	}
 }
 
+
+volatile share_mem *sm;
+
+
+
 void index_split(Index *index, ull bucket_tag) {// tag is in the line which is full 
 
+	sm->n_split ++;
 	//puts("split");
 	// get mid_tag
 	uint line = bucket_tag;
@@ -501,6 +542,23 @@ uint solve(uint unsolved, Query *q)
 		KV *kv = qy->q_kv;
 		qy->entry.node_entry = rt->entry;
 		ull tag = *(ull*)kv->content;
+		/*
+		if(tag == 13124069031439191547ull) {
+			if(qy->type == REQ_PUT) {
+				puts("a put to this KV");
+			}
+			else puts("a get to this KV");
+			printf("round = %d, id = %d\n", cnt, id);
+		}
+		if(tag == 4345230722318123020ull) {
+			if(qy->type == REQ_PUT) {
+				puts("a put to another KV");
+			}
+			else puts("a get to another KV");
+			printf("round = %d, id = %d\n", cnt, id);
+		}
+		*/
+		
 		qy->tree_tag = treetag(tag);
 		qy->bucket_tag = buckettag(tag);
 		qy->entry_tag = entrytag(tag);
@@ -523,9 +581,19 @@ uint solve(uint unsolved, Query *q)
 			group++;
 			qy->group = group;// for PUT
 			qy->new_block = (Block*)ray_allocator[group].allocate();
+			
+			if(qy->new_block != ID2BLOCK(qy->new_block->offset, qy->group)) {
+				puts("addr not match");
+			}
+			/*
+			if(tag == 13124069031439191547ull || tag == 4345230722318123020ull) {
+				printf("%llx %llx\n", (ull)qy->new_block, (ull)ID2BLOCK(qy->new_block->offset, qy->group));
+			}
+			*/
 			// block->father = NULL
 			memcpy(&qy->new_block->kv, kv, kv_size);
 		}
+		//else puts("GET");
 	}
 	// find index/bucket
 	tree_search_table[batch](q);
@@ -535,7 +603,7 @@ uint solve(uint unsolved, Query *q)
 	
 	for(uint id = batch-1; id; id--) {
 		Query *qy = q + id;
-		for(uint pre = 0; pre < id; pre++) {
+		for(uint pre = 0; pre < id; pre++) {//				HERE CAN ADD A HASH, IF FIND SAME, THEN LOOP, OTHERWISE NOT LOOP
 			Query *qp = q + pre;
 			if(qp->entry.bucket_entry != qy->entry.bucket_entry) continue;
 			//only check the first that match
@@ -550,10 +618,12 @@ uint solve(uint unsolved, Query *q)
 	uint n_put = 0;
 	for(uint id = 0; id < batch-unsolved; id++) {
 		uint put_id = n_put;
-		if(q[id].type != REQ_PUT || id == put_id)
+		if(q[id].type != REQ_PUT)
 			continue;
-		Query *qy = q + id, *qs = q + put_id;
-		swap(*qs, *qy);
+		if(id != put_id){
+			Query *qy = q + id, *qs = q + put_id;
+			swap(*qs, *qy);
+		}
 		n_put ++;
 	}
 	
@@ -575,6 +645,10 @@ uint solve(uint unsolved, Query *q)
 		}
 		else {
 			sum ^= qy->type;
+			if(qy->type != 3 && qy->type != 4) {
+				printf("error id = %d, key = %llu\n", (int)qy->type, *(ull*)qy->q_kv->content);
+				exit(-1);
+			}
 		}
 	}
 	for(uint id = 0; id < unsolved; id++) {
@@ -582,6 +656,8 @@ uint solve(uint unsolved, Query *q)
 		swap(*qy, *qs);
 	}
 	unsolved += n_extend;
+	
+	//if(cnt == 6595)printf("unsolved %d (extend %d, conflict %d)\n", unsolved, n_extend, unsolved-n_extend);
 	
 	return unsolved;
 }
@@ -605,7 +681,7 @@ int main()
 		puts("shm error");
 		return 0;
 	}
-	volatile share_mem *sm = (share_mem *)shmat(shmid, SHMVA, 0);
+	sm = (share_mem *)shmat(shmid, SHMVA, 0);
 	if((long long)sm == (long long)-1) {
 		puts("shm error");
 		return 0;

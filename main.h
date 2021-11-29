@@ -14,11 +14,11 @@
 
 #define likely(x) __builtin_expect(!!(x), 1)
 #define unlikely(x) __builtin_expect(!!(x), 0)
-#define treetag(x) (((uint*)&(x))[1]&0x7fffffff)
-#define buckettag(x) (((us*)&(x))[1]&(BUCKET_NUM-1))
-#define entrytag(x) (((us*)&(x))[0])
+#define treetag(x) ((uint)((x)>>32 & 0x7fffffff))
+#define buckettag(x) ((us)((x)>>16 & (BUCKET_NUM-1)))
+#define entrytag(x) ((us)((x) & 0xffff))
 
-#define TREE_TAG_MAX ((uint)-1) 
+#define TREE_TAG_INF ((uint)-1) 
 
 #define REQ_GET 1
 #define REQ_PUT 2

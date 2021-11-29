@@ -1,7 +1,8 @@
 #include "main.h"
 #include "test.h"
 
-const int NITER = 16384;
+
+const int NITER = 65536;
 const int window = 16;
 ull rand_x[NITER], rand_y[NITER];// may produce 17GB KV
 int raw, col;
@@ -58,6 +59,7 @@ int main()
 	}
 	
 	sm->window = window;
+	sm->n_split = 0;
 	volatile KV* volatile*kv = sm->kv;
 	
 	for(int i = 0; i < window; i++) {
@@ -71,20 +73,24 @@ int main()
 	int ACK = sm->ACK;
 	while(ACK == sm->ACK) usleep(1000), sm->signal++;
 	
-	ll t1 = clock(), t2;
+	ull t1 = get_time_ns(), t2;
 	ll kv_sum = 0;
 	int turn = 1;
 	int n_wr = 0;
+	int n_split = 0;
 	
 	for(int id = 0; ; id = id+1==window ? 0 : id+1) {
 		
 		if(unlikely(n_wr>=NITER)) {
 			kv_sum += n_wr;
-			t2 = clock();
-			double dt = 1.0*(t2 - t1)/CLOCKS_PER_SEC;
+			if(kv_sum > 1e8) break;
+			t2 = get_time_ns();
+			double dt = (t2 - t1)/1e9;
 			t1 = t2;
 			double tpt = 1e-6*n_wr/dt;
-			printf("%.2lf MOPS (%s), %lld OPS IN TOTAL\n", tpt, turn?"PUT":"GET", kv_sum);
+			int t_split = sm->n_split;
+			printf("op = %s, tpt = %.2lf MOPS, dt = %2lf ms, new_split = %d, %lld OPS IN TOTAL\n", turn?"PUT":"GET", tpt, dt, t_split-n_split, kv_sum);
+			n_split = t_split;
 			if(turn == 0)// next is a new round PUT-GET
 				raw ++, col = 0;
 			if(raw == NITER)
