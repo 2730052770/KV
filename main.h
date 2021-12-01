@@ -12,6 +12,7 @@
 #include <unistd.h>
 #include <new>
 
+
 #define likely(x) __builtin_expect(!!(x), 1)
 #define unlikely(x) __builtin_expect(!!(x), 0)
 #define treetag(x) ((uint)((x)>>32 & 0x7fffffff))
@@ -20,13 +21,16 @@
 
 #define TREE_TAG_INF ((uint)-1) 
 
+#define REQ_EMPTY 0
 #define REQ_GET 1
 #define REQ_PUT 2
-#define RESP_GET_SUCCESS 3
-#define RESP_PUT_SUCCESS 4
-#define RESP_GET_KEY_NOT_EXISTS 5
-#define RESP_DELETE_KEY_NOT_EXISTS 6
-#define NOT_COMPLETE(type) ((type) <= REQ_PUT)
+#define REQ_DELETE 3
+
+#define RESP_INIT 3 // only happen once
+#define RESP_READ 4 // read but not solved
+#define RESP_EMPTY 0 // new KV that hasn't been read
+#define RESP_HAS_KEY 1 // solved
+#define RESP_NO_KEY 2 // solved
 
 
 typedef long long ll;
@@ -132,9 +136,7 @@ struct KV{// 3
 	char content[];// key + value
 }__attribute__((packed));
 #define KV_SIZE(key_len,value_len) (sizeof(KV)+(key_len)+(value_len))
-#define TEST_KEY_LEN 16
-#define TEST_VALUE_LEN 45
-#define TEST_KV_SIZE KV_SIZE(TEST_KEY_LEN, TEST_VALUE_LEN)
+
 
 
 
@@ -161,26 +163,29 @@ struct Block{
 #define FATHER(ptr) (*(uint*)(ptr))
 
 
-#define FIND_EMPTY 1
+#define FIND_NULL 1
 #define FIND_MATCH 2
-#define FIND_FULL 3
+#define FIND_FULL_FOR_PUT 3
 
+struct TEST_Q;
 
 struct Query{
-	uc type;// 1 REQ_GET, 2 REQ_PUT, 3 GET_SUC, 4 PUT_SUC, 
-			// 5 GET_KEY_NOT_EXISTS, 6 DELETE_KEY_NOT_EXISTS
+	uc req_type;// 1 REQ_GET, 2 REQ_PUT, 3 REQ_DELETE
+	uc resp_type;
+		// 4 RESP_HAS_KEY (GET: success, PUT: success (update), DELETE: success)
+		// 5 RESP_NO_KEY (GET: failed (return null), PUT: success (insert a new key), DELETE: failed)
 	uc group;// only for PUT
-	uc entry_type;
-	uc unused;
-	uint entry_id;
+	uc first_entry_type;
+	uint first_entry_id;
+	uint tree_tag;
+	us bucket_tag;
+	us entry_tag;
+	volatile TEST_Q *tq;
 	Index *index;
 	union {
 		Node_entry *node_entry;
 		Bucket_entry *bucket_entry;
 	}entry;
-	uint tree_tag;
-	us bucket_tag;
-	us entry_tag;
 	KV *q_kv;// outer kv of query
 	Block *old_block;
 	Block *new_block;// inner block
@@ -218,13 +223,6 @@ struct Allocator {
 	void shrink();
 };
 
-struct Cacheline{
-	ull mem[8];
-}__attribute__((aligned(64)));
-
-uint randuint();
-ull randull();
-inline ull myrand(ull *seed);
 
 const int SHMKEY = 123456;
 void* const SHMVA = (void*)0x600000000000ull;

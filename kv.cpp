@@ -94,7 +94,7 @@ void tree_search(Query *q)
 		qy->index = idx;
 		Bucket_entry * first = idx->bucket[bid].entry;
 		qy->entry.bucket_entry = first;//this is Bucket_entry* in fact
-		qy->entry_id = 0;
+		qy->first_entry_id = 0;
 		__builtin_prefetch(first, 1, 0);
 	}
 }
@@ -128,114 +128,66 @@ void first_bucket_search(uint n_put, Query *q)//							THE TEMPLATE MAY NOT BE U
 			   (entry->type == ENTRY_TYPE_INUSE && entry->tag == entry_tag && entry->tree_tag == tree_tag)) 
 			   break;
 		}
-		if(col==BUCKET_LEN) qy->entry_type = FIND_FULL;// do we need pre-extend?
+		if(col==BUCKET_LEN && qy->req_type == REQ_PUT) {
+			qy->first_entry_type = FIND_FULL_FOR_PUT;// do we need pre-extend?
+		}
 		else if(entry->type == ENTRY_TYPE_INUSE) {
-			qy->entry_type = FIND_MATCH;
+			qy->first_entry_type = FIND_MATCH;
 			old_block = ID2BLOCK(entry->offset, entry->group);
 			qy->old_block = old_block;
 			__builtin_prefetch(old_block, 0, 0);
 		}
-		else qy->entry_type = FIND_EMPTY;
+		else qy->first_entry_type = FIND_NULL;
 		qy->entry.bucket_entry = entry;
-		qy->entry_id = col;
+		qy->first_entry_id = col;
 	}
-	for(uint id = 0; id < n_put; id++) {
+	for(uint id = 0; id < batch; id++) {
 		qy = q + id;
 		entry = qy->entry.bucket_entry;
-		switch(qy->entry_type){
-			case FIND_EMPTY:// PUT not match / DELETE_LEY_NOT_EXISTS
-				if(qy->group == NO_GROUP) {
-					qy->type = RESP_DELETE_KEY_NOT_EXISTS;
-				}
-				else {
-					qy->type = RESP_PUT_SUCCESS;
+		switch(qy->first_entry_type){
+			case FIND_NULL:// PUT not match / DELETE_LEY_NOT_EXISTS
+				qy->resp_type = RESP_NO_KEY;
+				
+				if(qy->req_type == REQ_PUT) {
 					entry->type = ENTRY_TYPE_INUSE;
 					entry->group = qy->group;
 					entry->tag = qy->entry_tag;
 					entry->tree_tag = qy->tree_tag;
 					entry->offset = qy->new_block->offset;
-					/*
-					if(*(ull*)qy->q_kv->content == 13124069031439191547ull) {
-						printf("factual addr = %llx\n", (ull)ID2BLOCK(entry->offset, entry->group));
-					}
-					*/
 					qy->new_block->father = INDEX_ID(qy->index);
 				}
 				break;
+
 			case FIND_MATCH:// PUT/DELETE match
-			
-				//puts("a put-tag-match");
-			
-				old_block = qy->old_block;
-				old_kv = &old_block->kv;
-				new_kv = qy->q_kv;
-				/*
-				if(qy->tree_tag == 1936946035) {
-					Cnt++;
-					if(Cnt==283) {
-						puts("breakp");
-					}
-					printf("find, %d\n", Cnt);
-				}
-				*/
-				if(old_kv->len_key == new_kv->len_key && 
-				   memcmp(old_kv->content, new_kv->content, old_kv->len_key) == 0) {
-				   
-				   	//puts("a inplace-put");
-				   
-					// if really match
-					/*
-					if(qy->tree_tag == 1936946035) {
-						puts("do match");
-					}
-					*/
-				   	qy->type = RESP_PUT_SUCCESS;
-				   	
-				   	ray_allocator[entry->group].free(old_block);
-				   	
-				   	if(qy->group == NO_GROUP) {// delete
-				   		entry->type = ENTRY_TYPE_EMPTY;
-				   		uint col = qy->entry_id + 1;
-				   		Bucket_entry *last = qy->entry.bucket_entry + 1;
-				   		for(; col < BUCKET_LEN; col++, last++)
-				   			if(last->type == ENTRY_TYPE_EMPTY)
-				   				break;
-				   		last--;
-				   		swap(*last, *entry);
-					}
-					else {
-						entry->group = qy->group;
-					   	entry->offset = qy->new_block->offset;
-					   	qy->new_block->father = INDEX_ID(qy->index);
-					}
-				}
-				break;
-		}
-	}
-	for(uint id = n_put; id < batch; id++) {
-		qy = q + id;
-		switch(qy->entry_type){
-			case FIND_EMPTY:// GET KEY NOT EXISTS
-			case FIND_FULL:
-				qy->type = RESP_GET_KEY_NOT_EXISTS;
-				break;
-			case FIND_MATCH:// GET match
 				old_block = qy->old_block;
 				old_kv = &old_block->kv;
 				new_kv = qy->q_kv;
 				if(old_kv->len_key == new_kv->len_key && 
 				   memcmp(old_kv->content, new_kv->content, old_kv->len_key) == 0) {
-					// if really match
-				   	qy->type = RESP_GET_SUCCESS;
+				   
+				   	qy->resp_type = RESP_HAS_KEY;
+				   	
+				   	if(qy->req_type != REQ_GET) {
+				   	
+					   	ray_allocator[entry->group].free(old_block);
+					   	
+					   	if(qy->req_type == REQ_DELETE) {// delete
+					   		entry->type = ENTRY_TYPE_EMPTY;
+					   		uint col = qy->first_entry_id + 1;
+					   		Bucket_entry *last = qy->entry.bucket_entry + 1;
+					   		for(; col < BUCKET_LEN; col++, last++)
+					   			if(last->type == ENTRY_TYPE_EMPTY)
+					   				break;
+					   		last--;
+					   		swap(*last, *entry);
+						}
+						else {
+							entry->group = qy->group;
+						   	entry->offset = qy->new_block->offset;
+						   	qy->new_block->father = INDEX_ID(qy->index);
+						}
+					}
 				}
-				/*
-				else {
-					puts("a get tag match but miss");
-					if(treetag(*(ull*)old_kv->content) != qy->entry.bucket_entry->tree_tag)
-						printf("unexpected modify, old_block addr = %llx\n", (ull)qy->old_block);
-					printf("%llu %llu\n", *(ull*)old_kv->content, *(ull*)qy->q_kv->content);
-				}
-				*/
 				break;
 		}
 	}
@@ -252,7 +204,7 @@ void second_bucket_search(uint n_op, Query *q)
 	KV *old_kv, *new_kv;
 	Bucket_entry *entry;
 	
-	for(uint id = 0; id < n_op; id++) if(NOT_COMPLETE(q[id].type) && q[id].entry_type == FIND_MATCH){ // PUT
+	for(uint id = 0; id < n_op; id++) if(q[id].resp_type == RESP_EMPTY && q[id].first_entry_type == FIND_MATCH){ // PUT
 	
 		//puts("an KV enter second_search");
 	
@@ -265,25 +217,19 @@ void second_bucket_search(uint n_op, Query *q)
 			printf("find!!!, %d\n", Cnt);
 		}
 		*/
-		uint col = qy->entry_id + 1;
+		uint col = qy->first_entry_id + 1;
 		for(; col < BUCKET_LEN; col++, entry++) {
 			if(entry->type == ENTRY_TYPE_EMPTY) {
-				if(qy->type == REQ_PUT) {
-					if(qy->group == NO_GROUP) {
-						qy->type = RESP_DELETE_KEY_NOT_EXISTS;
-					}
-					else {
-						qy->type = RESP_PUT_SUCCESS;
-						entry->type = ENTRY_TYPE_INUSE;
-						entry->group = qy->group;
-						entry->tag = qy->entry_tag;
-						entry->tree_tag = qy->tree_tag;
-						entry->offset = qy->new_block->offset;
-						qy->new_block->father = INDEX_ID(qy->index);
-					}
-				}
-				else {
-					qy->type = RESP_GET_KEY_NOT_EXISTS;
+
+				qy->resp_type = RESP_NO_KEY;
+
+				if(qy->req_type == REQ_PUT){
+					entry->type = ENTRY_TYPE_INUSE;
+					entry->group = qy->group;
+					entry->tag = qy->entry_tag;
+					entry->tree_tag = qy->tree_tag;
+					entry->offset = qy->new_block->offset;
+					qy->new_block->father = INDEX_ID(qy->index);
 				}
 				break;
 			}
@@ -294,12 +240,15 @@ void second_bucket_search(uint n_op, Query *q)
 				if(old_kv->len_key != new_kv->len_key || 
 				   memcmp(old_kv->content, new_kv->content, old_kv->len_key) != 0)
 					continue;
-				if(qy->type == REQ_PUT) {
-					qy->type = RESP_PUT_SUCCESS;
+					
+				qy->resp_type = RESP_HAS_KEY;	
+				qy->old_block = old_block;
+				
+				if(qy->req_type != REQ_GET) {
 				   	
 				   	ray_allocator[entry->group].free(old_block);
 				   	
-				   	if(qy->group == NO_GROUP) {// delete
+				   	if(qy->req_type == REQ_DELETE) {// delete
 				   		entry->type = ENTRY_TYPE_EMPTY;
 				   		uint ncol = col + 1;
 				   		Bucket_entry *last = entry + 1;
@@ -309,26 +258,17 @@ void second_bucket_search(uint n_op, Query *q)
 				   		last--;
 				   		swap(*last, *entry);
 					}
-					else {
+					else {// put
 						entry->group = qy->group;
 					   	entry->offset = qy->new_block->offset;
 					   	qy->new_block->father = INDEX_ID(qy->index);
 					}
 				}
-				else {
-				   	qy->type = RESP_GET_SUCCESS;
-					qy->old_block = old_block;
-				}
 				break;
 			}
 		}
-		if(col != BUCKET_LEN) continue;
-		if(qy->type == REQ_GET) 
-			qy->type = RESP_GET_KEY_NOT_EXISTS;
-		else if(qy->group == NO_GROUP) 
-			qy->type = RESP_DELETE_KEY_NOT_EXISTS;
-		else
-			qy->entry_type = FIND_FULL;
+		if(col == BUCKET_LEN && qy->req_type != REQ_PUT) 
+			qy->resp_type = RESP_NO_KEY;
 	}
 }
 
@@ -506,26 +446,7 @@ void index_split(Index *index, ull bucket_tag) {// tag is in the line which is f
 	tree_insert(father, mid_tree_tag, INDEX_ID(index), INDEX_ID(new_index), 1);
 	//return make_pair(new_index, mid_tree_tag);
 }
-/*
-int put_one(Index *index, Query *qy, ull full_tag) // -1 iff error
-{
-	uint raw = buckettag(full_tag);
-	Bucket *bucket = index->bucket + raw;
-	for(Bucket_entry *entry = bucket->entry; entry < bucket->entry + BUCKET_LEN; entry++) {
-		if(entry->type == 0) {// after split, there is no tomb
-			entry->offset = qy->block->offset;
-			entry->type = 1;
-			entry->group = qy->group;
-			entry->tag = entrytag(full_tag);
-			entry->tree_tag = treetag(full_tag);
-			return 0;
-		}
-	}
-	puts("put_one error");
-	exit(-1);
-	return -1;
-}
-*/
+
 template<uint batch>
 uint solve(uint unsolved, Query *q)
 {
@@ -542,33 +463,13 @@ uint solve(uint unsolved, Query *q)
 		KV *kv = qy->q_kv;
 		qy->entry.node_entry = rt->entry;
 		ull tag = *(ull*)kv->content;
-		/*
-		if(tag == 13124069031439191547ull) {
-			if(qy->type == REQ_PUT) {
-				puts("a put to this KV");
-			}
-			else puts("a get to this KV");
-			printf("round = %d, id = %d\n", cnt, id);
-		}
-		if(tag == 4345230722318123020ull) {
-			if(qy->type == REQ_PUT) {
-				puts("a put to another KV");
-			}
-			else puts("a get to another KV");
-			printf("round = %d, id = %d\n", cnt, id);
-		}
-		*/
 		
 		qy->tree_tag = treetag(tag);
 		qy->bucket_tag = buckettag(tag);
 		qy->entry_tag = entrytag(tag);
 		
 		// allocate a block for PUT
-		if(qy->type == REQ_PUT) {
-			if(kv->len_value == (us)-1) {// DELETE
-				qy->group = NO_GROUP;
-				continue;
-			}
+		if(qy->req_type == REQ_PUT) {
 			uint group = 0;
 			uint kv_size = KV_SIZE(kv->len_key, kv->len_value);
 			uint block_size = BLOCK_SIZE(kv->len_key, kv->len_value);
@@ -585,12 +486,7 @@ uint solve(uint unsolved, Query *q)
 			if(qy->new_block != ID2BLOCK(qy->new_block->offset, qy->group)) {
 				puts("addr not match");
 			}
-			/*
-			if(tag == 13124069031439191547ull || tag == 4345230722318123020ull) {
-				printf("%llx %llx\n", (ull)qy->new_block, (ull)ID2BLOCK(qy->new_block->offset, qy->group));
-			}
-			*/
-			// block->father = NULL
+			
 			memcpy(&qy->new_block->kv, kv, kv_size);
 		}
 		//else puts("GET");
@@ -599,26 +495,31 @@ uint solve(uint unsolved, Query *q)
 	tree_search_table[batch](q);
 	
 	// delay those who have conflicts (keep time order)
+	//printf("input unsolved %d\n", unsolved);
 	unsolved = 0;
 	
 	for(uint id = batch-1; id; id--) {
 		Query *qy = q + id;
+		//printf("repeat: %llu\n", *(ull*)qy->q_kv->content);
 		for(uint pre = 0; pre < id; pre++) {//				HERE CAN ADD A HASH, IF FIND SAME, THEN LOOP, OTHERWISE NOT LOOP
 			Query *qp = q + pre;
 			if(qp->entry.bucket_entry != qy->entry.bucket_entry) continue;
 			//only check the first that match
-			if(qp->type == REQ_GET && qy->type == REQ_GET) break;
+			//if(qp->req_type == REQ_GET && qy->req_type == REQ_GET) break;// THIS WILL BREAK THE ORDER
 			unsolved ++;
 			Query *qs = q+batch-unsolved;
 			swap(*qs, *qy);
+			//printf("swap %d %d\n", id, pre);
 			break;
 		}
 	}
-	// divide PUT and GET
+	//printf("conflict = %d\n", unsolved);
+	
+	// divide PUT/DELETE and GET
 	uint n_put = 0;
 	for(uint id = 0; id < batch-unsolved; id++) {
 		uint put_id = n_put;
-		if(q[id].type != REQ_PUT)
+		if(q[id].req_type == REQ_GET)
 			continue;
 		if(id != put_id){
 			Query *qy = q + id, *qs = q + put_id;
@@ -636,7 +537,7 @@ uint solve(uint unsolved, Query *q)
 	
 	for(uint id = 0; id < batch-unsolved; id ++) {
 		Query *qy = q + id, *qs;
-		if(NOT_COMPLETE(qy->type)) {
+		if(qy->resp_type == RESP_EMPTY) {
 			//pair<Index*, uint>pr = 
 			index_split(qy->index, qy->bucket_tag);// to be worked
 			qs = q + n_extend++;
@@ -644,19 +545,20 @@ uint solve(uint unsolved, Query *q)
 			// a index may be splited more than once
 		}
 		else {
-			sum ^= qy->type;
-			if(qy->type != 3 && qy->type != 4) {
-				printf("error id = %d, key = %llu\n", (int)qy->type, *(ull*)qy->q_kv->content);
+			sum ^= qy->resp_type;
+			if(qy->req_type != REQ_PUT && qy->resp_type == RESP_NO_KEY) {
+				printf("error, REQ = %d, RESP = %d, key = %llu, id = %d\n", (int)qy->req_type, (int)qy->resp_type, *(ull*)qy->q_kv->content, id);
 				exit(-1);
 			}
 		}
 	}
+	//printf("extend %d\n", n_extend);
 	for(uint id = 0; id < unsolved; id++) {
 		Query *qy = q+batch-unsolved+id, *qs = q+n_extend+id;
 		swap(*qy, *qs);
 	}
 	unsolved += n_extend;
-	
+	//printf("output unsolved %d\n", unsolved);
 	//if(cnt == 6595)printf("unsolved %d (extend %d, conflict %d)\n", unsolved, n_extend, unsolved-n_extend);
 	
 	return unsolved;
@@ -668,7 +570,7 @@ uint (*solve_table[]) (uint, Query*) = {
 
 int main()
 {
-	char global_kv_buf[MAX_BATCH*TEST_KV_SIZE];
+	static char global_kv_buf[MAX_BATCH*MAX_TEST_KV_SIZE];
 	Query q[MAX_BATCH];
 	memset(q, 0, sizeof(q));
 
@@ -676,7 +578,7 @@ int main()
 	
 	init_tree();
 	
-	int shmid = shmget(SHMKEY, 4*K, 0666 | IPC_CREAT);
+	int shmid = shmget(SHMKEY, M, 0666 | IPC_CREAT);
 	if(shmid == -1) {
 		puts("shm error");
 		return 0;
@@ -701,24 +603,40 @@ int main()
 		//进一步地，如果要防止同一个batch中的GET/PUT乱序，最好加强要求每个BUCKET中PUT和GET不共存
 		//注意！treetag不同也可能会分到同一个BUCKET
 		
-		volatile KV *kv = sm->kv[id];
-		if(kv->len_key == 0) continue;
+		volatile TEST_Q *tq = sm->tq[id];
+		if(tq->resp_type != RESP_EMPTY) continue;
 	
 		//__sync_synchronize();
 		//fence
+		
+		
 		Query *qy = q + num;
-		qy->type = kv->len_value==0 ? REQ_GET : REQ_PUT;
-		if(!qy->q_kv) qy->q_kv = (KV*)(global_kv_buf + TEST_KV_SIZE*num);
-		volatile_cpy(qy->q_kv, kv, TEST_KV_SIZE);
+		qy->tq = tq;
+		qy->req_type = tq->req_type;
+		qy->resp_type = RESP_EMPTY;
+		if(!qy->q_kv) qy->q_kv = (KV*)(global_kv_buf + MAX_TEST_KV_SIZE*num);
+		
+		volatile KV *kv = &tq->kv;
+		
+		volatile_cpy(qy->q_kv, kv, KV_SIZE(kv->len_key, kv->len_value));
+		
+		tq->resp_type = RESP_READ;
+		
+		//printf("%s %llu\n", qy->req_type == REQ_GET ? "GET" : "PUT", *(ull*)qy->q_kv->content);
 		
 		//__sync_synchronize();
 		//fence
-		
-		kv->len_key = 0;//
 		num++;
 		
 		if(num == batch) {
-			old = num = solve_table[num](old, q);// assert num of put <= 5
+			old = num = solve_table[batch](old, q);// assert num of put <= 5
+			for(int i = old; i < batch; i++) {
+				if(q[i].req_type == REQ_GET && q[i].resp_type == RESP_HAS_KEY) {
+					volatile_cpy(&q[i].tq->kv, &q[i].old_block->kv, KV_SIZE(q[i].old_block->kv.len_key, q[i].old_block->kv.len_value));
+				}
+				q[i].tq->resp_type = q[i].resp_type;
+				//usleep(1);
+			}
 		}
 	}
 	return 0;
