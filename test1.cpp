@@ -19,10 +19,10 @@ ull new_rand()
 	return rand_y[raw] ^ rand_x[col++];
 }
 
-ull old_rand(int d)
+ull old_rand()
 {
 	static ull seed = 114514ull << 40 ^ 1919810;
-	ull tot = raw * NITER + col - d;
+	ull tot = raw * NITER + col;
 	ull id = fastrand(&seed) % tot;
 	int old_raw = id / NITER;
 	int old_col = id % NITER;
@@ -56,8 +56,8 @@ int main()
 	init_rand();
 	
 	
-	int ACK = sm->ACK;
-	while(ACK == sm->ACK) usleep(1000), sm->signal++;
+	int ACK = sm->S_ACK;
+	while(ACK == sm->S_ACK) usleep(1000), sm->START++;
 	
 	ull t1 = get_time_ns(), t2;
 	ll kv_sum = 0;
@@ -121,15 +121,15 @@ int main()
 			
 			kv->len_key = TEST1_KEY_LEN;
 			kv->len_value = 0;
-			ull rd = old_rand(delay);
+			ull rd = old_rand();
 			*(volatile ull*)kv->content = rd;
 			char byte = (char)rd;
 			volatile_set(kv->content + 8, byte, kv->len_key-8);// other bytes of key
 		}
 		//__sync_synchronize();
 		tq->resp_type = RESP_EMPTY;
-		
-		
 	}
+	ACK = sm->E_ACK;
+	while(ACK == sm->E_ACK) usleep(1000), sm->END++;
 	return 0;
 }

@@ -1,6 +1,6 @@
 all: main test1 test2 test3
 
-fast_test: debug_main test1 test2 test3
+test: debug_main test1 test2 test3
 
 debug: debug_main debug_test1 debug_test2 debug_test3
 
@@ -30,4 +30,4 @@ main: kv.cpp allocator.cpp main.h test.h testutils.cpp
 
 .PHONY: clean	
 clean:
-	rm main test1 test2
+	rm main test1 test2 test3

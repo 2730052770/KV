@@ -369,25 +369,24 @@ volatile share_mem *sm;
 
 
 
-void index_split(Index *index, ull bucket_tag) {// tag is in the line which is full 
-
+pair<Index*, uint> index_split(const Query *qy) {// tag is in the line which is full 
+#ifdef DEBUG
 	sm->n_split ++;
+#endif
+	
 	//puts("split");
 	// get mid_tag
-	uint line = bucket_tag;
+	Index *index = qy->index;
+	uint line = qy->bucket_tag;
 	Bucket_entry *entrys = index->bucket[line].entry;
-	/*
-	Block * blocks[BUCKET_LEN];
-	for(uint col = 0; col < BUCKET_LEN; col++) {
-		//既然反正都要改block,那就都从block里读需要的信息吧
-		blocks[col] = ID2BLOCK(entrys[col]->offset, entrys[col]->group);
-		//__builtin_prefetch(blocks[col], 1, 0);
-	}
-	*/
+
+	if(entrys[BUCKET_LEN-1].type == ENTRY_TYPE_EMPTY) return make_pair((Index*)NULL, (uint)0); // not full
+	
 	const uint size = BUCKET_LEN/2;
-	uint tree_tags[size];
+	uint min_tag = TREE_TAG_INF, tree_tags[size];
 	for(uint col = 0; col < size; col++) {// insertion sort
 		uint element = entrys[col].tree_tag;
+		if(element < min_tag) min_tag = element;
 		uint pos = 0;
 		for(; pos < col; pos++)
 			if(element > tree_tags[pos])// big -> small
@@ -398,6 +397,7 @@ void index_split(Index *index, ull bucket_tag) {// tag is in the line which is f
 	}
 	for(uint col = size; col < BUCKET_LEN; col++) {
 		uint element = entrys[col].tree_tag;
+		if(element < min_tag) min_tag = element;
 		uint pos = 0;
 		for(; pos < size; pos++)
 			if(element > tree_tags[pos])
@@ -407,6 +407,9 @@ void index_split(Index *index, ull bucket_tag) {// tag is in the line which is f
 			tree_tags[i] = tree_tags[i-1];
 		tree_tags[pos] = element;
 	}
+	assert(min_tag != tree_tags[0]/* == max_tag */);
+	// assert the number of elements that share the same tree_tag and bucket_tag is never greater than BUCKET_LEN
+	
 	uint mid_tree_tag = tree_tags[size-1];// < and >=
 	
 	// split index 
@@ -420,7 +423,7 @@ void index_split(Index *index, ull bucket_tag) {// tag is in the line which is f
 		Bucket_entry *l_end = index->bucket[raw].entry + BUCKET_LEN;
 		Bucket_entry *r_end = new_index->bucket[raw].entry + BUCKET_LEN;
 		
-		for(; ptr < l_end && ptr->type; ptr++) if(ptr->type==ENTRY_TYPE_INUSE){
+		for(; ptr < l_end && ptr->type && ptr->type==ENTRY_TYPE_INUSE; ptr++){
 	  		if(ptr->tree_tag < mid_tree_tag) 
 			  	*pl++ = *ptr;
 	  		else {
@@ -444,16 +447,39 @@ void index_split(Index *index, ull bucket_tag) {// tag is in the line which is f
 	// insert to tree
 	Node *father = ID2NODE(index->meta.father);
 	tree_insert(father, mid_tree_tag, INDEX_ID(index), INDEX_ID(new_index), 1);
-	//return make_pair(new_index, mid_tree_tag);
+	return make_pair(new_index, mid_tree_tag);
+}
+
+void put_one(Query *qy)
+{
+	//put the new KV in bucket
+	Bucket_entry *be = qy->index->bucket[qy->bucket_tag].entry, *end = be + BUCKET_LEN;
+	for( ; be < end; be++) if(be->type == ENTRY_TYPE_EMPTY) break;
+	assert(be != end);
+	
+	qy->resp_type = RESP_NO_KEY;
+	be->offset = qy->new_block->offset;
+	be->type = ENTRY_TYPE_INUSE;
+	be->group = qy->group;
+	be->tag = qy->entry_tag;
+	be->tree_tag = qy->tree_tag;
+	qy->new_block->father = INDEX_ID(qy->index);
 }
 
 template<uint batch>
 uint solve(uint unsolved, Query *q)
 {
-	static int sum = 0;
+#ifdef DEBUG
 	static int cnt = 0;
-	if((++cnt & ((1<<20)-1)) == 0) printf("sum = %d, level = %d\n",sum, global_level);
-	
+	if((++cnt & ((1<<17)-1)) != 0) goto end;
+	printf("cnt = %d, level = %d\n", cnt, global_level);
+	printf("node: %d %d\n", node_allocator->num_inuse(), node_allocator->page_num);
+	printf("index: %d %d\n", index_allocator->num_inuse(), index_allocator->page_num);
+	printf("ray: ");
+	for(uint i = 0; i < GROUP_NUM; i++) 
+	  printf("(OBJSZ=%d, OBJNUM=%d, PAGENUM=%d)%c", GROUP_SIZE[i], ray_allocator[i].num_inuse(), ray_allocator[i].page_num, " \n"[i==GROUP_NUM-1]);
+	end:
+#endif
 	
 	for(uint id = 0; id < unsolved; id++) 
 		q[id].entry.node_entry = rt->entry;
@@ -470,15 +496,14 @@ uint solve(uint unsolved, Query *q)
 		
 		// allocate a block for PUT
 		if(qy->req_type == REQ_PUT) {
-			uint group = 0;
+			int group = -1;// this should be int
 			uint kv_size = KV_SIZE(kv->len_key, kv->len_value);
 			uint block_size = BLOCK_SIZE(kv->len_key, kv->len_value);
-			for(uint jmp = JMP_START; jmp; jmp >>= 1) {
-				uint nxt = group + jmp;
+			for(int jmp = JMP_START; jmp; jmp >>= 1) {
+				int nxt = group + jmp;
 				if(GROUP_SIZE[nxt] < block_size)
 					group = nxt;
 			}
-			assert(group < GROUP_NUM-1);
 			group++;
 			qy->group = group;// for PUT
 			qy->new_block = (Block*)ray_allocator[group].allocate();
@@ -528,36 +553,36 @@ uint solve(uint unsolved, Query *q)
 		n_put ++;
 	}
 	
-	// complete all quests that can be solve in at most 1 match (of tag)
+	// complete all quests that can be solved without extension
 	bucket_search(n_put, batch-unsolved, q);
 	
 	// third try
 	// solve all requests requiring spliting index
-	uint n_extend = 0;
+	//uint n_extend = 0;
 	
 	for(uint id = 0; id < batch-unsolved; id ++) {
-		Query *qy = q + id, *qs;
-		if(qy->resp_type == RESP_EMPTY) {
-			//pair<Index*, uint>pr = 
-			index_split(qy->index, qy->bucket_tag);// to be worked
-			qs = q + n_extend++;
-			swap(*qs, *qy);
-			// a index may be splited more than once
-		}
-		else {
-			sum ^= qy->resp_type;
-			if(qy->req_type != REQ_PUT && qy->resp_type == RESP_NO_KEY) {
-				printf("error, REQ = %d, RESP = %d, key = %llu, id = %d\n", (int)qy->req_type, (int)qy->resp_type, *(ull*)qy->q_kv->content, id);
-				exit(-1);
+		Query *qy = q + id, *qn;
+		if(qy->resp_type != RESP_EMPTY) continue;
+		pair<Index*, uint>p = index_split(qy);// to be worked
+		if(p.first != NULL) {
+			Index* old_index = qy->index;
+			for(uint nxt = id; nxt < batch-unsolved; nxt++) {
+				qn = q + nxt;
+				if(qn->resp_type != RESP_EMPTY || qn->index != old_index || qn->tree_tag < p.second) 
+					continue;
+				qn->index = p.first;
 			}
 		}
+		put_one(qy);
+		/*qs = q + n_extend++;
+		swap(*qs, *qy);*/
 	}
 	//printf("extend %d\n", n_extend);
 	for(uint id = 0; id < unsolved; id++) {
-		Query *qy = q+batch-unsolved+id, *qs = q+n_extend+id;
+		Query *qy = q+batch-unsolved+id, *qs = q+id;
 		swap(*qy, *qs);
 	}
-	unsolved += n_extend;
+	//unsolved += n_extend;
 	//printf("output unsolved %d\n", unsolved);
 	//if(cnt == 6595)printf("unsolved %d (extend %d, conflict %d)\n", unsolved, n_extend, unsolved-n_extend);
 	
@@ -568,8 +593,15 @@ uint (*solve_table[]) (uint, Query*) = {
 		solve<5>, solve<6>, solve<7>, solve<8>
 };
 
-int main()
+int main(int argc, char **argv)
 {
+	int batch;
+	if(argc != 2) {
+		printf("usage: \"./main BATCH_SIZE\"\n");
+		return 0;
+	}
+	batch = atoi(argv[1]);
+
 	static char global_kv_buf[MAX_BATCH*MAX_TEST_KV_SIZE];
 	Query q[MAX_BATCH];
 	memset(q, 0, sizeof(q));
@@ -588,20 +620,21 @@ int main()
 		puts("shm error");
 		return 0;
 	}
-	int signal = sm->signal;
-	while(signal == sm->signal) usleep(1000);
-	sm->ACK ++;
+	int signal = sm->START;
+	while(signal == sm->START) usleep(1000);
+	sm->S_ACK ++;
+	signal = sm->END;
 	
-	int batch;
-	printf("input value of \"batch\"\n");
-	scanf("%d", &batch);
 	int num = 0, old = 0;
 	int window = sm->window;
+	
 	
 	for(int id = 0; ; id = id+1==window ? 0 : id+1) {
 		//如果要避免多个PUT在同一个BUCKET导致的各种情况，则可以要求每个batch中每个BUCKET至多一个PUT
 		//进一步地，如果要防止同一个batch中的GET/PUT乱序，最好加强要求每个BUCKET中PUT和GET不共存
 		//注意！treetag不同也可能会分到同一个BUCKET
+		
+		if(signal != sm->END) break;
 		
 		volatile TEST_Q *tq = sm->tq[id];
 		if(tq->resp_type != RESP_EMPTY) continue;
@@ -639,5 +672,6 @@ int main()
 			}
 		}
 	}
+	sm->E_ACK++;
 	return 0;
  } 

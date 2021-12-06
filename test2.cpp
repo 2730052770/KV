@@ -45,8 +45,8 @@ int main()
 		tq[i]->resp_type = RESP_INIT; 
 	}
 	// shake hands
-	int ACK = sm->ACK;
-	while(ACK == sm->ACK) usleep(1000), sm->signal++;
+	int ACK = sm->S_ACK;
+	while(ACK == sm->S_ACK) usleep(1000), sm->START++;
 	
 	//
 	ull t1 = get_time_ns(), t2;
@@ -151,5 +151,7 @@ int main()
 		//__sync_synchronize();
 		//usleep(1000);
 	}
+	ACK = sm->E_ACK;
+	while(ACK == sm->E_ACK) usleep(1000), sm->END++;
 	return 0;
 }

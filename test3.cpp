@@ -3,11 +3,11 @@
 #include "test.h"
 using namespace std;
 using namespace __gnu_pbds;
-const int NITER = 1<<16;
+const int NITER = 1<<17;
 const int window = 32;
-const int key_capacity = 1e5;
-const int max_offset = 0.2;
-const int q_num = 1e7;
+const double max_offset = 0.1;
+int key_capacity;
+int q_num;
 // big = (1e5, 1e8)
 // mid = (1000, 1e7)
 // small = (100, 1e7)
@@ -23,7 +23,7 @@ uint answertype[window];
 #define GET_NOT_EXIST 4
 #define DELETE_NOT_EXIST 5
 
-void generate_KV(uint id, volatile KV *kv, bool key_exists, bool value_needed, bool need_cmp)
+void generate_KV(uint id, volatile KV *kv, bool key_exists, char req_type)
 {
 	ull key;
 	string value;
@@ -33,7 +33,8 @@ void generate_KV(uint id, volatile KV *kv, bool key_exists, bool value_needed, b
 		auto p = mp.find_by_order(ord);
 		key = p->first;
 		answertype[id] = RESP_HAS_KEY;
-		if(need_cmp) answer[id] = p->second;
+		if(req_type == REQ_GET) answer[id] = p->second;
+		if(req_type == REQ_DELETE) mp.erase(p);
 	}
 	else {
 		do key = STL_randull(); while(mp.find(key) != mp.end());
@@ -41,18 +42,27 @@ void generate_KV(uint id, volatile KV *kv, bool key_exists, bool value_needed, b
 	}
 	kv->len_key = 8;
 	*(ull*)kv->content = key;
-	if(value_needed) {
+	if(req_type == REQ_PUT) {
 		value = gen_str(1, MAX_TEST2_V_SIZE);
 		kv->len_value = value.size();
 		volatile_cpy(kv->content + 8, (char*)value.c_str(), value.size());
+		
+		mp[key] = value;
 	}
 	else kv->len_value = 0;
 }
 
-int main()
+int main(int argc, char **argv)
 {
+	if(argc != 3) {
+		printf("usage \"./test3 KEY_NUM Q_NUM\"\n");
+		return 0;
+	}
+	key_capacity = atoi(argv[1]);
+	q_num = atoi(argv[2]);
+	
 	// allocate share memory
-	int seed = time(0);
+	int seed = time(0);//1638685516;
 	srand(seed);
 	printf("seed = %d\n",seed);
 	
@@ -78,8 +88,8 @@ int main()
 		tq[i]->resp_type = RESP_INIT; 
 	}
 	// shake hands
-	int ACK = sm->ACK;
-	while(ACK == sm->ACK) usleep(1000), sm->signal++;
+	int ACK = sm->S_ACK;
+	while(ACK == sm->S_ACK) usleep(1000), sm->START++;
 	
 	//
 	ll kv_sum = 0;
@@ -105,11 +115,16 @@ int main()
 		if(tq->resp_type == RESP_EMPTY || tq->resp_type == RESP_READ) continue;
 		
 		if(tq->resp_type != RESP_INIT) {
+			if(tq->resp_type != answertype[id]) {
+				printf("%d %d %d %d\n", tq->req_type, answertype[id], tq->resp_type, n_wr);
+			}
 			assert(tq->resp_type == answertype[id]);
+			//cout<<"checktype"<<endl;
 			if(tq->req_type == REQ_GET && answertype[id] == RESP_HAS_KEY) {
 				assert(answer[id].size() == tq->kv.len_value);
 				for(int i = 0; i < tq->kv.len_value; i++)
 					assert(answer[id][i] == tq->kv.content[8+i]);
+				//cout<<"check get, answer = "<<answer[id][0]<<"..."<<endl;
 			}
 		}
 		
@@ -129,32 +144,32 @@ int main()
 			case GET:
 				n_get++;
 				tq->req_type = REQ_GET;
-				generate_KV(id, kv, 1, 0, 1);
+				generate_KV(id, kv, 1, REQ_GET);
 				break;
 			case DELETE:
 				n_delete++;
 				tq->req_type = REQ_DELETE;
-				generate_KV(id, kv, 1, 0, 0);
+				generate_KV(id, kv, 1, REQ_DELETE);
 				break;
 			case GET_NOT_EXIST:
 				n_get_null++;
 				tq->req_type = REQ_GET;
-				generate_KV(id, kv, 0, 0, 0);
+				generate_KV(id, kv, 0, REQ_GET);
 				break;
 			case DELETE_NOT_EXIST:
 				n_delete_null++;
 				tq->req_type = REQ_DELETE;
-				generate_KV(id, kv, 0, 0, 0);
+				generate_KV(id, kv, 0, REQ_DELETE);
 				break;
 			case PUT_NEW:
 				n_put_new++;
 				tq->req_type = REQ_PUT;
-				generate_KV(id, kv, 0, 1, 0);
+				generate_KV(id, kv, 0, REQ_PUT);
 				break;
 			case UPDATE:
 				n_update++;
 				tq->req_type = REQ_PUT;
-				generate_KV(id, kv, 1, 1, 0);
+				generate_KV(id, kv, 1, REQ_PUT);
 				break;
 			
 		}
@@ -166,5 +181,7 @@ int main()
 		//__sync_synchronize();
 		//usleep(1000);
 	}
+	ACK = sm->E_ACK;
+	while(ACK == sm->E_ACK) usleep(1000), sm->END++;
 	return 0;
 }

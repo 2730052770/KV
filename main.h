@@ -188,7 +188,7 @@ struct Query{
 	}entry;
 	KV *q_kv;// outer kv of query
 	Block *old_block;
-	Block *new_block;// inner block
+	Block *new_block;
 };
 
 struct Allocator {
@@ -198,7 +198,7 @@ struct Allocator {
 	char* page_tail;
 	const size_t obj_size;
 	int page_num;
-	int obj_num;// the number of in use and free ones
+	int total_obj_num;// the number of in use and free ones
 	int free_obj_num;
 	const size_t page_size;
 	//const int page_capacity;
@@ -219,6 +219,9 @@ struct Allocator {
 		OBJ_NEXT(ptr) = head;
 		head = (char*)ptr;
 		free_obj_num ++;
+	}
+	inline int num_inuse(){
+		return total_obj_num - free_obj_num;
 	}
 	void shrink();
 };

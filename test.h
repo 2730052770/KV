@@ -23,8 +23,10 @@ struct TEST_Q{// 3
 };
 
 struct share_mem{
-	int signal;
-	int ACK;
+	int START;
+	int S_ACK;
+	int END;
+	int E_ACK;
 	int window;
 	int n_split;
 	volatile TEST_Q *tq[];
@@ -53,5 +55,6 @@ ull STL_randull();
 ull fastrand(ull*);
 string gen_str(int, int);
 
+#define DEBUG
 
 #endif
