@@ -5,7 +5,7 @@
 		./main 8
 	in terminal2: 
 		./test1
-2. for correctiness testing:
+2. for correctness testing:
 	in terminal1: 
 		make clean
 		make test
