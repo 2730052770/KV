@@ -5,7 +5,7 @@
 #include <map>
 using namespace std;
 const int NITER = 1<<16;
-const int window = 32;
+const int window = 64;
 const int key_num = 1e5;
 const int q_num = 1e7;
 // big = (1e5, 1e8)

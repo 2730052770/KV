@@ -69,24 +69,31 @@ void tree_search(Query *q)
 					entry[id] = nxt;
 			}
 		}
-		/*
-		
-		for(uint id = 0; id < batch; id++) {//  now in level $lv, choose a son	// WE CAN SWAP THESE TWO AND PUT PREFETCH IN IT !!!
-			for(uint jmp = FORK_NUM>>1; jmp; jmp>>=1) { 
+	}
+	
+	/*
+	for(uint lv = 1; lv < global_level; lv++) {// the nodes have $level different kind of hight
+		for(uint jmp = FORK_NUM>>1; jmp; jmp>>=1) {//  now in level $lv, choose a son	// WE CAN SWAP THESE TWO AND PUT PREFETCH IN IT !!!
+			for(uint id = 0; id < batch; id++) { 
 				Node_entry * nxt = entry[id] + jmp;
 				if(tag[id] >= nxt->tag)
 					entry[id] = nxt;
 			}
-			if(lv < global_level-1) {
-				Node *son = (Node*)NODE_BASE + entry[id]->offset;
-				entry[id] = son->entry;// to be jump to level $lv
-				__builtin_prefetch(entry[id], 0, 0);
-			}
 		}
-		*/
+		for(uint id = 0; id < batch; id++) { 
+			Node *son = (Node*)NODE_BASE + entry[id]->offset;
+			entry[id] = son->entry;// to be jump to level $lv
+			__builtin_prefetch(entry[id], 0, 0);
+		}
 	}
-	
-	
+	for(uint jmp = FORK_NUM>>1; jmp; jmp>>=1) {//  now in level $lv, choose a son	// WE CAN SWAP THESE TWO AND PUT PREFETCH IN IT !!!
+		for(uint id = 0; id < batch; id++) { 
+			Node_entry * nxt = entry[id] + jmp;
+			if(tag[id] >= nxt->tag)
+				entry[id] = nxt;
+		}
+	}
+	*/
 	for(uint id = 0; id < batch; id++) {
 		Query *qy = q+id;
 		Index * idx = (Index*)INDEX_BASE + entry[id]->offset;
@@ -104,13 +111,12 @@ void (*tree_search_table[]) (Query *) = {
 };
 
 template<uint batch>
-void first_bucket_search(uint n_put, Query *q)//							THE TEMPLATE MAY NOT BE USEFUL
+void first_bucket_search(Query *q)//							THE TEMPLATE MAY NOT BE USEFUL
 {
 	//这里还可以尝试换换两个循环的顺序，需要一些技巧跳过已经查完的
 	//这里我可以手动展开+跳转实现对变长的支持,先摆烂
 	// switch 就行 
 	//这里可以让两个tag分别从两端向中间查 
-	if(n_put > batch) return;
 
 	Query *qy;
 	Block *old_block;
@@ -131,15 +137,16 @@ void first_bucket_search(uint n_put, Query *q)//							THE TEMPLATE MAY NOT BE U
 		if(col==BUCKET_LEN && qy->req_type == REQ_PUT) {
 			qy->first_entry_type = FIND_FULL_FOR_PUT;// do we need pre-extend?
 		}
-		else if(entry->type == ENTRY_TYPE_INUSE) {
+		else if(col < BUCKET_LEN && entry->type == ENTRY_TYPE_INUSE) {
 			qy->first_entry_type = FIND_MATCH;
 			old_block = ID2BLOCK(entry->offset, entry->group);
 			qy->old_block = old_block;
 			__builtin_prefetch(old_block, 0, 0);
 		}
+		//else 
 		else qy->first_entry_type = FIND_NULL;
-		qy->entry.bucket_entry = entry;
 		qy->first_entry_id = col;
+		qy->entry.bucket_entry = entry;
 	}
 	for(uint id = 0; id < batch; id++) {
 		qy = q + id;
@@ -192,7 +199,7 @@ void first_bucket_search(uint n_put, Query *q)//							THE TEMPLATE MAY NOT BE U
 		}
 	}
 }
-void (*first_bucket_search_table[]) (uint, Query*) = {
+void (*first_bucket_search_table[]) (Query*) = {
 	first_bucket_search<0>, first_bucket_search<1>, first_bucket_search<2>, first_bucket_search<3>,first_bucket_search<4>,
 	first_bucket_search<5>, first_bucket_search<6>, first_bucket_search<7>, first_bucket_search<8>,
 };
@@ -272,11 +279,11 @@ void second_bucket_search(uint n_op, Query *q)
 	}
 }
 
-void bucket_search(uint n_put, uint n_op, Query *q)
+void bucket_search(uint n_op, Query *q)
 {
 	//你需要考虑：GET after PUT, PUT after same PUT, PUT after different PUT, PUT after DEL, DEL after PUT...
 	//不如直接BUCKET互斥
-	first_bucket_search_table[n_op](n_put, q);
+	first_bucket_search_table[n_op](q);
 	second_bucket_search(n_op, q);
 }
 
@@ -471,7 +478,7 @@ uint solve(uint unsolved, Query *q)
 {
 #ifdef DEBUG
 	static int cnt = 0;
-	if((++cnt & ((1<<17)-1)) != 0) goto end;
+	if((++cnt & ((1<<20)-1)) != 0) goto end;
 	printf("cnt = %d, level = %d\n", cnt, global_level);
 	printf("node: %d %d\n", node_allocator->num_inuse(), node_allocator->page_num);
 	printf("index: %d %d\n", index_allocator->num_inuse(), index_allocator->page_num);
@@ -514,59 +521,36 @@ uint solve(uint unsolved, Query *q)
 			
 			memcpy(&qy->new_block->kv, kv, kv_size);
 		}
-		//else puts("GET");
 	}
 	// find index/bucket
-	tree_search_table[batch](q);
+	tree_search<batch>(q);
 	
 	// delay those who have conflicts (keep time order)
-	//printf("input unsolved %d\n", unsolved);
 	unsolved = 0;
 	
-	for(uint id = batch-1; id; id--) {
+	for(uint id = 0; id<batch; id++) {
 		Query *qy = q + id;
 		//printf("repeat: %llu\n", *(ull*)qy->q_kv->content);
-		for(uint pre = 0; pre < id; pre++) {//				HERE CAN ADD A HASH, IF FIND SAME, THEN LOOP, OTHERWISE NOT LOOP
+		for(uint pre = unsolved; pre < id; pre++) {//				HERE CAN ADD A HASH, IF FIND SAME, THEN LOOP, OTHERWISE NOT LOOP
 			Query *qp = q + pre;
 			if(qp->entry.bucket_entry != qy->entry.bucket_entry) continue;
 			//only check the first that match
 			//if(qp->req_type == REQ_GET && qy->req_type == REQ_GET) break;// THIS WILL BREAK THE ORDER
-			unsolved ++;
-			Query *qs = q+batch-unsolved;
-			swap(*qs, *qy);
-			//printf("swap %d %d\n", id, pre);
+			swap(q[unsolved++], *qy);
 			break;
 		}
 	}
-	//printf("conflict = %d\n", unsolved);
-	
-	// divide PUT/DELETE and GET
-	uint n_put = 0;
-	for(uint id = 0; id < batch-unsolved; id++) {
-		uint put_id = n_put;
-		if(q[id].req_type == REQ_GET)
-			continue;
-		if(id != put_id){
-			Query *qy = q + id, *qs = q + put_id;
-			swap(*qs, *qy);
-		}
-		n_put ++;
-	}
-	
+
 	// complete all quests that can be solved without extension
-	bucket_search(n_put, batch-unsolved, q);
+	bucket_search(batch-unsolved, q+unsolved);
 	
-	// third try
-	// solve all requests requiring spliting index
-	//uint n_extend = 0;
-	
-	for(uint id = 0; id < batch-unsolved; id ++) {
+	for(uint id = unsolved; id < batch; id ++) {
 		Query *qy = q + id, *qn;
 		if(qy->resp_type != RESP_EMPTY) continue;
 		pair<Index*, uint>p = index_split(qy);// to be worked
 		if(p.first != NULL) {
 			Index* old_index = qy->index;
-			for(uint nxt = id; nxt < batch-unsolved; nxt++) {
+			for(uint nxt = id; nxt < batch; nxt++) {
 				qn = q + nxt;
 				if(qn->resp_type != RESP_EMPTY || qn->index != old_index || qn->tree_tag < p.second) 
 					continue;
@@ -574,17 +558,7 @@ uint solve(uint unsolved, Query *q)
 			}
 		}
 		put_one(qy);
-		/*qs = q + n_extend++;
-		swap(*qs, *qy);*/
 	}
-	//printf("extend %d\n", n_extend);
-	for(uint id = 0; id < unsolved; id++) {
-		Query *qy = q+batch-unsolved+id, *qs = q+id;
-		swap(*qy, *qs);
-	}
-	//unsolved += n_extend;
-	//printf("output unsolved %d\n", unsolved);
-	//if(cnt == 6595)printf("unsolved %d (extend %d, conflict %d)\n", unsolved, n_extend, unsolved-n_extend);
 	
 	return unsolved;
 }
@@ -628,17 +602,26 @@ int main(int argc, char **argv)
 	int num = 0, old = 0;
 	int window = sm->window;
 	
-	
+	int emptyloop = 0, validloop = 0;
 	for(int id = 0; ; id = id+1==window ? 0 : id+1) {
 		//如果要避免多个PUT在同一个BUCKET导致的各种情况，则可以要求每个batch中每个BUCKET至多一个PUT
 		//进一步地，如果要防止同一个batch中的GET/PUT乱序，最好加强要求每个BUCKET中PUT和GET不共存
 		//注意！treetag不同也可能会分到同一个BUCKET
 		
-		if(signal != sm->END) break;
+		
 		
 		volatile TEST_Q *tq = sm->tq[id];
-		if(tq->resp_type != RESP_EMPTY) continue;
-	
+		if(tq->resp_type != RESP_EMPTY && signal == sm->END) {
+			emptyloop++;
+			continue;
+		}
+		if(signal != sm->END) break;
+		
+		validloop++;
+		if((validloop & 0xfffff) == 0) {
+			printf("%d %d\n", emptyloop, validloop);
+		}
+		
 		//__sync_synchronize();
 		//fence
 		

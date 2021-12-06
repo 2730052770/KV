@@ -3,7 +3,7 @@
 
 
 const int NITER = 65536;
-const int window = 32;
+const int window = 64;
 const int delay = 32;
 ull rand_x[NITER], rand_y[NITER];// may produce 17GB KV
 int raw, col;
@@ -59,8 +59,10 @@ int main()
 	int ACK = sm->S_ACK;
 	while(ACK == sm->S_ACK) usleep(1000), sm->START++;
 	
-	ull t1 = get_time_ns(), t2;
-	ll kv_sum = 0;
+	ull st = get_time_ns(), t1 = st, t2;
+	ull dt_get = 0, dt_put = 0, pre_dt_get = 0, pre_dt_put = 0;
+	ll kv_sum_get = 0, kv_sum_put = 0, pre_kv_sum_get = 0, pre_kv_sum_put = 0;
+	ll pre_sum = 0;
 	int turn = 1;
 	int n_wr = 0;
 	int n_split = 0;
@@ -68,22 +70,32 @@ int main()
 	for(int id = 0; ; id = id+1==window ? 0 : id+1) {
 		
 		if(unlikely(n_wr>=NITER)) {
-			kv_sum += n_wr;
-			if(kv_sum > 1e8) break;
 			t2 = get_time_ns();
-			double dt = (t2 - t1)/1e9;
+			if(turn) kv_sum_put += n_wr, dt_put += t2-t1;
+			else kv_sum_get += n_wr, dt_get += t2-t1;
+			
+			if(kv_sum_put+kv_sum_get > 5e7) break;
 			t1 = t2;
-			double tpt = 1e-6*n_wr/dt;
-			int t_split = sm->n_split;
-			printf("op = %s, tpt = %.2lf MOPS, dt = %2lf ms, new_split = %d, %lld OPS IN TOTAL\n", turn?"PUT":"GET", tpt, dt, t_split-n_split, kv_sum);
-			n_split = t_split;
+			turn ^= 1;
+			n_wr = 0;
 			if(turn == 0)// next is a new round PUT-GET
 				raw ++, col = 0;
 			if(raw == NITER)
 				break;
-			turn ^= 1;
-			n_wr = 0;
-		}	
+		}
+		if((kv_sum_put+kv_sum_get) >= pre_sum + (1<<20)) {
+			pre_sum = kv_sum_put+kv_sum_get;
+			double tpt_p = 1e3*(kv_sum_put-pre_kv_sum_put)/(dt_put-pre_dt_put);
+			double tpt_g = 1e3*(kv_sum_get-pre_kv_sum_get)/(dt_get-pre_dt_get);
+			pre_kv_sum_put = kv_sum_put;
+			pre_kv_sum_get = kv_sum_get;
+			pre_dt_put = dt_put;
+			pre_dt_get = dt_get;
+			int t_split = sm->n_split;
+			printf("tpt_p = %.2lf MOPS, tpt_g = %.2lf MOPS, new_split = %d, %lld OPS IN TOTAL\n", tpt_p, tpt_g, t_split-n_split, kv_sum_put+kv_sum_get);
+			n_split = t_split;
+		}
+			
 		volatile TEST_Q *tq = sm->tq[id];
 		if(tq->resp_type == RESP_EMPTY || tq->resp_type == RESP_READ) continue;
 		
@@ -129,6 +141,7 @@ int main()
 		//__sync_synchronize();
 		tq->resp_type = RESP_EMPTY;
 	}
+	printf("AVG TPT = %.2lf MOPS\n", 1000.0*(kv_sum_get+kv_sum_put)/(get_time_ns()-st));
 	ACK = sm->E_ACK;
 	while(ACK == sm->E_ACK) usleep(1000), sm->END++;
 	return 0;

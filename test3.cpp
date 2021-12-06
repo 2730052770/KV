@@ -4,7 +4,7 @@
 using namespace std;
 using namespace __gnu_pbds;
 const int NITER = 1<<17;
-const int window = 32;
+const int window = 64;
 const double max_offset = 0.1;
 int key_capacity;
 int q_num;

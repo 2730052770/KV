@@ -9,10 +9,13 @@ using namespace std;
 
 #define MAX_TEST2_V_SIZE (MAX_TEST_KV_SIZE-sizeof(KV)-sizeof(ull))
 
-#define TEST1_KEY_LEN 16
-#define TEST1_VALUE_LEN 45
+#define TEST1_BLOCK_SIZE 64
+#define TEST1_KV_SIZE (TEST1_BLOCK_SIZE-sizeof(Block)+sizeof(KV))
 
-#define TEST1_Q_SIZE (KV_SIZE(TEST1_KEY_LEN, TEST1_VALUE_LEN) + sizeof(TEST_Q) - sizeof(KV))
+#define TEST1_KEY_LEN 16
+#define TEST1_VALUE_LEN (TEST1_KV_SIZE - sizeof(KV) - TEST1_KEY_LEN)
+
+#define TEST1_Q_SIZE (TEST1_KV_SIZE + sizeof(TEST_Q) - sizeof(KV))
 
 #define TEST2_Q_SIZE (MAX_TEST_KV_SIZE + sizeof(TEST_Q) - sizeof(KV))
 
