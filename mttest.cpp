@@ -29,7 +29,7 @@ void * run(void * arg)
 	cpu_set_t mask;
 	CPU_ZERO(&mask);
 	CPU_SET(tid, &mask);
-	assert(pthread_setaffinity_np(th[i], sizeof(mask), &mask) == 0);
+	assert(pthread_setaffinity_np(th[tid], sizeof(mask), &mask) == 0);
 	
 	srand(time(0) + tid);
 	
