@@ -32,7 +32,7 @@ void * run(void * arg)
 	
 	const uint nput = 1e7, checkmask = 0xfffff;
 	ll *k = new ll[nput];
-	srand(time(0));
+	srand(time(0) + tid);
 	for(uint i = 0; i < nput; i++) k[i] = (ll)rand() << 32 ^ rand();
 	
 	
