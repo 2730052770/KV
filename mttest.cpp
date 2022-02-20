@@ -25,14 +25,21 @@ void * run(void * arg)
 	uint tid = (ull)arg>>32;
 	uint batch = (int)(ull)arg;
 	printf("tid = %d, batch = %d\n", tid, batch);
-
+	
+	cpu_set_t mask;
+	CPU_ZERO(&mask);
+	CPU_SET(tid, &mask);
+	assert(pthread_setaffinity_np(th[i], sizeof(mask), &mask) == 0);
+	
+	srand(time(0) + tid);
+	
 	Query q[MAX_BATCH];
 	memset(q, 0, sizeof(q));
 
 	
 	const uint nput = 1e7, checkmask = 0xfffff;
 	ll *k = new ll[nput];
-	srand(time(0) + tid);
+	
 	for(uint i = 0; i < nput; i++) k[i] = (ll)rand() << 32 ^ rand();
 	
 	
