@@ -2,6 +2,8 @@
 #define TEST_H
 
 #include <string>
+#include "global.h"
+#include "kv.h"
 using namespace std;
 
 #define MAX_TEST_BLOCK_SIZE 256
@@ -19,12 +21,20 @@ using namespace std;
 
 #define TEST2_Q_SIZE (MAX_TEST_KV_SIZE + sizeof(TEST_Q) - sizeof(KV))
 
+#define CACHELINEROUNDUP(x) (((x)+63)/64*64)
+/*
+struct KV{// 3
+	us len_value;
+	uc len_key; 
+	char content[];// key + value
+}__attribute__((packed));
+
 struct TEST_Q{// 3
 	uc req_type;// REQ_GET, REQ_PUT
 	uc resp_type;
 	KV kv;
 };
-
+*/
 struct share_mem{
 	int START;
 	int S_ACK;
@@ -58,6 +68,6 @@ ull STL_randull();
 ull fastrand(ull*);
 string gen_str(int, int);
 
-#define DEBUG
+//#define DEBUG
 
 #endif

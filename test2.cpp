@@ -5,7 +5,7 @@
 #include <map>
 using namespace std;
 const int NITER = 1<<16;
-const int window = 64;
+const int window = 16;
 const int key_num = 1e5;
 const int q_num = 1e7;
 // big = (1e5, 1e8)
@@ -19,7 +19,7 @@ string answer[window];
 int main()
 {
 	// allocate share memory
-	int seed = time(0);
+	int seed = 1645266010;//time(0);
 	srand(seed);
 	printf("seed = %d\n",seed);
 	
@@ -49,7 +49,6 @@ int main()
 	while(ACK == sm->S_ACK) usleep(1000), sm->START++;
 	
 	//
-	ull t1 = get_time_ns(), t2;
 	ll kv_sum = 0;
 	int n_wr = 0;
 	int n_split = 0;
@@ -73,10 +72,6 @@ int main()
 		if(unlikely(n_wr>=NITER)) {
 			kv_sum += n_wr;
 			if(kv_sum > q_num) break;
-			t2 = get_time_ns();
-			double dt = (t2 - t1)/1e9;
-			t1 = t2;
-			double tpt = 1e-6*n_wr/dt;
 			int t_split = sm->n_split;
 			printf("%.1lf%%: new_split = %d, n_put = %d, n_get = %d, tot_key_in_map = %d, tot_index = %d, %lld OPS IN TOTAL\n", 100.0*kv_sum/q_num, t_split-n_split, n_put, n_get, (int)mp.size(), t_split, kv_sum);
 			n_put = n_get = 0;
@@ -88,6 +83,7 @@ int main()
 		if(tq->resp_type == RESP_EMPTY || tq->resp_type == RESP_READ) continue;
 		
 		if(tq->resp_type != RESP_INIT && tq->req_type == REQ_GET) {
+			//printf("check %lld\n", *(ull*)tq->kv.content);
 			assert(tq->resp_type == RESP_HAS_KEY);
 			assert(answer[id].size() == tq->kv.len_value);
 			for(int i = 0; i < tq->kv.len_value; i++)

@@ -1,10 +1,8 @@
 1. for throughput testing:
-	in terminal1: 
-		make clean
-		make
-		./main 8
-	in terminal2: 
-		./test1
+	make clean
+	make mttest
+	./mttest $NTHREAD 8
+	(NTHREAD is the number of threads)
 2. for correctness testing:
 	in terminal1: 
 		make clean

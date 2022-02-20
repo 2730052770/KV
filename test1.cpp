@@ -49,7 +49,7 @@ int main()
 	
 	for(int i = 0; i < window; i++) {
 		volatile TEST_Q* volatile*tq = sm->tq;
-		tq[i] = (TEST_Q*)((char*)((TEST_Q**)tq+window) + TEST1_Q_SIZE*i);
+		tq[i] = (TEST_Q*)((char*)((TEST_Q**)tq+window) + CACHELINEROUNDUP(TEST1_Q_SIZE)*i);
 		tq[i]->resp_type = RESP_INIT; 
 	}
 	
@@ -74,7 +74,7 @@ int main()
 			if(turn) kv_sum_put += n_wr, dt_put += t2-t1;
 			else kv_sum_get += n_wr, dt_get += t2-t1;
 			
-			if(kv_sum_put+kv_sum_get > 5e7) break;
+			if(kv_sum_put+kv_sum_get > 8e7) break;
 			t1 = t2;
 			turn ^= 1;
 			n_wr = 0;
