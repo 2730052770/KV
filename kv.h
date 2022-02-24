@@ -51,6 +51,16 @@ struct Ptr{
 	char addr[6];
 };
 
+struct Meta_data{// 8
+	uc allocator_meta_data;
+	uc unused;
+	Ptr father;
+};
+
+struct Virtual_node{
+	Meta_data meta;
+};
+
 inline void * readptr(void * ptr) {
 	return (void*)(*(ull*)ptr & aligned_addr_mask);
 }
@@ -60,9 +70,17 @@ inline void setptr(void *ptr, void *tar) {
 	*pu = (*pu & ~aligned_addr_mask) | (ull)tar;
 }
 
-inline void setpureptr(void *ptr, void *tar) {
+inline void setpureptr(Ptr *ptr, void *tar) {
 	ull *pu = (ull*)ptr;
 	*pu = (*pu & ~full_addr_mask) | (ull)tar;
+}
+
+inline void setfather(void *node, void *tar) {
+	setpureptr(&((Virtual_node*)node)->meta.father, tar);
+}
+
+inline void * readfather(void *node) {
+	return readptr(&((Virtual_node*)node)->meta.father);
 }
 
 struct Node_entry{//10
@@ -71,8 +89,7 @@ struct Node_entry{//10
 }__attribute__((packed));
 
 struct Node {// 128
-	Ptr father;
-	char unused[2];
+	Meta_data meta;
 	Node_entry entry[NODE_FORK_NUM];
 };
 
@@ -89,7 +106,7 @@ struct Bucket{// 256
 };
 
 union Table {//16k (note that this is a union)
-	Ptr father;// every Bucket has 8 byte unused at the front end
+	Meta_data meta;
 	Bucket bucket[BUCKET_NUM];
 };
 
@@ -100,9 +117,31 @@ struct KV{// 3
 }__attribute__((packed));
 
 struct Block{
-	Ptr father;
+	Meta_data meta;
 	KV kv;
 }__attribute__((packed));
+
+
+// CACHE
+/*
+const int CACHE_GROUP_LEN = 4;
+const int CACHE_GROUP_NUM = 16;
+
+struct Cache_entry{
+	ull nxt : 2;
+	ull block : 46;
+	ull tag : 16;
+};
+
+struct Cache_group{
+	Cache_entry[CACHE_GROUP_LEN];
+};
+
+struct Cache{
+	Cache_group[CACHE_GROUP_NUM];
+};
+*/
+
 
 struct TEST_Q{// 3
 	uc req_type;// REQ_GET, REQ_PUT
@@ -132,16 +171,17 @@ struct Query{
 };
 
 struct KVS{
-	Allocator block_allocator;
+	Allocator_pair block_allocator;
 	Small_allocator node_allocator, table_allocator;
 	Node *rt;
 	uint global_level;
 	ull (*hash) (char *st, char *ed);
+	//Cache cache;
 	
 	static ull default_hash_function(char *, char *);
 	
 	KVS(ull (*_hash) (char *, char *) = default_hash_function);
-	KVS(const KVS &_kvs);
+	KVS(const KVS &_);
 	
 	void init_allocator();
 	
@@ -177,7 +217,7 @@ struct KVS{
 				Node *son = (Node*)readptr(&entry[id]->ptr);
 				entry[id] = son->entry;
 				__builtin_prefetch(son, 0, 0);
-				//__builtin_prefetch((char*)son+64, 0, 0);
+				__builtin_prefetch((char*)son+64, 0, 0);
 				//__builtin_prefetch((char*)son+128, 0, 0);
 				//__builtin_prefetch((char*)son+192, 0, 0);
 				/*
@@ -213,6 +253,8 @@ struct KVS{
 			qy->first_entry_id = 0;
 			__builtin_prefetch(first, 1, 0);
 			__builtin_prefetch((char*)first+64, 1, 0);
+			__builtin_prefetch((char*)first+128, 1, 0);
+			__builtin_prefetch((char*)first+192, 1, 0);
 		}
 	}
 	
@@ -229,12 +271,18 @@ struct KVS{
 	template<uint batch>
 	uint solve(uint unsolved, Query *q){
 		//printf("solve\n");
+		
 		for(uint id = 0; id < unsolved; id++) 
 			q[id].entry.node_entry = rt->entry;
 		
 		for(uint id = unsolved; id < batch; id++) {
 			Query *qy = q + id;
 			KV *kv = qy->q_kv;
+			
+			
+			//log.record(qy->req_type, kv, time);
+			
+			
 			qy->entry.node_entry = rt->entry;
 			ull tag = hash(kv->content, kv->content+kv->len_key);
 			
@@ -252,6 +300,11 @@ struct KVS{
 				memcpy(&qy->new_block->kv, kv, kv_size);
 			}
 		}
+		/*
+		for(uint id = 0; id < unsolved; id++) {
+			
+		}
+		*/
 		// find table/bucket
 		tree_search<batch>(q);
 		

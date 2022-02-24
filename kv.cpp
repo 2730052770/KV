@@ -10,7 +10,7 @@ KVS::KVS(ull (*_hash) (char *, char *)) {
 	init_structure();
 }
 
-KVS::KVS(const KVS &_kvs) {
+KVS::KVS(const KVS &_) {
 	assert(false);
 }
 
@@ -28,22 +28,22 @@ ull KVS::default_hash_function(char *st, char *ed)
 }
 
 void KVS::init_allocator() {
-	new(&block_allocator) Allocator();
+	new(&block_allocator) Allocator_pair();
 	new(&node_allocator) Small_allocator(sizeof(Node), PAGE_SIZE, sizeof(Node));
 	new(&table_allocator) Small_allocator(sizeof(Table), PAGE_SIZE, sizeof(Table));
 }
 
 void KVS::init_structure() {
 	rt = (Node*)node_allocator.allocate();
-	setpureptr(&rt->father, 0);//
+	setfather(rt, 0);//
 	for(uint i = 1; i < NODE_FORK_NUM; i++)
 		rt->entry[i].tag = TREE_TAG_INF;
 		
 	Table *t = (Table*)table_allocator.allocate();
 	memset(t, 0, sizeof(Table));
-	setpureptr(&t->father, rt);
+	setfather(t, rt);
 	rt->entry[0].tag = 0;
-	setptr(&rt->entry[0].ptr, t);
+	setpureptr(&rt->entry[0].ptr, t);
 	global_level = 1;
 }
 
@@ -88,7 +88,7 @@ void KVS::first_bucket_search(uint batch, Query *q)
 				if(qy->req_type == REQ_PUT) {
 					*(ull*)entry = BUCKET_ENTRY_TYPE_INUSE | (ull)qy->new_block | ((ull)qy->entry_tag << 48);
 					entry->tree_tag = qy->tree_tag;
-					setpureptr(&qy->new_block->father, qy->table);
+					setfather(qy->new_block, qy->table);
 				}
 				break;
 
@@ -117,7 +117,7 @@ void KVS::first_bucket_search(uint batch, Query *q)
 						}
 						else {
 						   	setptr(entry, qy->new_block);
-						   	setpureptr(&qy->new_block->father, qy->table);
+						   	setfather(qy->new_block, qy->table);
 						}
 					}
 				}
@@ -149,7 +149,7 @@ void KVS::second_bucket_search(uint batch, Query *q)
 				if(qy->req_type == REQ_PUT){
 					*(ull*)entry = BUCKET_ENTRY_TYPE_INUSE | (ull)qy->new_block | ((ull)qy->entry_tag << 48);
 					entry->tree_tag = qy->tree_tag;
-					setpureptr(&qy->new_block->father, qy->table);
+					setfather(qy->new_block, qy->table);
 				}
 				break;
 			}
@@ -180,7 +180,7 @@ void KVS::second_bucket_search(uint batch, Query *q)
 					}
 					else {
 						setptr(entry, qy->new_block);
-					   	setpureptr(&qy->new_block->father, qy->table);
+					   	setfather(qy->new_block, qy->table);
 					}
 				}
 				break;
@@ -201,7 +201,7 @@ void KVS::tree_insert(Node *node, uint tree_tag, void *old_son, void *new_son)
 			pos = cnt + 1;			// if pos has not been assigned here, then pos = 1;
 	}
 	
-	setpureptr(new_son, node);
+	setfather(new_son, node);////////////////////////////////////////////////////////////////////////////////////////////
 	
 	if(likely(cnt < NODE_FORK_NUM)) {
 		//puts("normal");
@@ -250,16 +250,17 @@ void KVS::tree_insert(Node *node, uint tree_tag, void *old_son, void *new_son)
 		
 		// son -> new father
 		for(uint i = 0; i < r_cnt; i++) 
-			setpureptr(fp[i], new_node);
+			setfather(fp[i], new_node);/////////////////////////////////////////////////////////////////////////////
 		// new father -> grandfather
 		uint mid_tag = new_node->entry[0].tag;
-		if(readptr(&node->father) == NULL) {
+		void *father = readfather(node);
+		if(father == NULL) {
 			global_level ++;
 			rt = (Node*)node_allocator.allocate();
-			setpureptr(&node->father, rt);
-			setpureptr(&new_node->father, rt);
+			setfather(node, rt);
+			setfather(new_node, rt);
 			
-			setpureptr(&rt->father, NULL);
+			setfather(rt, NULL);
 			rt->entry[0].tag = 0;
 			setptr(&rt->entry[0].ptr, node);
 			rt->entry[1].tag = mid_tag;
@@ -268,9 +269,9 @@ void KVS::tree_insert(Node *node, uint tree_tag, void *old_son, void *new_son)
 				rt->entry[i].tag = TREE_TAG_INF;
 		}
 		else{
-			new_node->father = node->father;
+			setfather(new_node, father);
 			// grandfather -> new father
-			tree_insert((Node*)readptr(&node->father), mid_tag, node, new_node);	
+			tree_insert((Node*)father, mid_tag, node, new_node);	
 		}
 	}
 }
@@ -314,11 +315,15 @@ pair<Table*, uint> KVS::table_split(Query *qy) {// tag is in the line which is f
 		assert(("need construct a inner structure", false));
 	}
 	
-	uint mid_tree_tag = tree_tags[size-1];// < and >=
-	
+	uint mid_tree_tag;
+	for(int i = size-1; ; i--)
+		if(min_tag != tree_tags[i]) {
+			mid_tree_tag = tree_tags[i];
+			break;
+		}
 	// split table 
 	Table *new_table = (Table*)table_allocator.allocate();
-	new_table->father = table->father;
+	setfather(new_table, readfather(table));
 	
 	for(uint raw = 0; raw < BUCKET_NUM; raw++) {
 		Bucket_entry *ptr = table->bucket[raw].entry;
@@ -341,12 +346,12 @@ pair<Table*, uint> KVS::table_split(Query *qy) {// tag is in the line which is f
 	for(uint raw = 0; raw < BUCKET_NUM; raw++) {
 		for(Bucket_entry * pr = new_table->bucket[raw].entry; 
 			pr < new_table->bucket[raw].entry + BUCKET_LEN && pr->type == BUCKET_ENTRY_TYPE_INUSE; pr++) {
-			setpureptr(readptr(pr), new_table);
+			setfather(readptr(pr), new_table);
 		}
 	}
 	
 	// insert to tree
-	tree_insert((Node*)readptr(&table->father), mid_tree_tag, table, new_table);
+	tree_insert((Node*)readfather(table), mid_tree_tag, table, new_table);
 	return make_pair(new_table, mid_tree_tag);
 }
 
@@ -360,6 +365,6 @@ void KVS::put_one(Query *qy)
 	qy->resp_type = RESP_NO_KEY;
 	*(ull*)be = BUCKET_ENTRY_TYPE_INUSE | (ull)qy->new_block | ((ull)qy->entry_tag << 48);
 	be->tree_tag = qy->tree_tag;
-	setpureptr(&qy->new_block->father, qy->table);
+	setfather(qy->new_block, qy->table);
 }
 

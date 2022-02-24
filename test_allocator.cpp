@@ -2,7 +2,7 @@
 
 void test_all()
 {
-	Allocator a;
+	Allocator_pair a;
 	for(int i = 1; i <= 10; i++){
 		void *ptr = a.allocate(17);
 		printf("%llx\n", ptr);
