@@ -1,11 +1,12 @@
 #include "allocator.h"
 
 Small_allocator::Small_allocator() 
-:block_size(0), segment_size(0), segment_start_offset(0)
+:queue_segment_size(0), block_size(0), segment_size(0), segment_start_offset(0)
 {}
 
-Small_allocator::Small_allocator(size_t _block_size, size_t _segment_size, int _offset)
-:free_block_head(NULL), uninitialized_block_head(NULL), segment_head(NULL), segment_id(0), block_size(_block_size), segment_size(_segment_size), segment_start_offset(_offset)
+Small_allocator::Small_allocator(size_t _block_size, size_t _segment_size, int _offset, size_t _queue_segment_size)
+:uninitialized_block_head(NULL), segment_head(NULL), queue_head(NULL), queue_tail(NULL), queue_segment_size(_queue_segment_size), 
+block_size(_block_size), segment_size(_segment_size), segment_start_offset(_offset)
 {
 	//printf("block size = %d, segment_size = %d, header_offset = %d, utilization = %.1lf%%\n", _block_size, _segment_size, _header_offset, 100.0*((_segment_size-_header_offset)/_block_size*_block_size) / _segment_size );
 	assert(sizeof(Segment) + block_size <= segment_size);
@@ -18,13 +19,8 @@ Small_allocator::Small_allocator(size_t _block_size, size_t _segment_size, int _
 void Small_allocator::allocate_segment() 
 { 
 	char *old_segment_head = segment_head;
-	segment_head = (char*)mmap(NULL, segment_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | 0x40000 /*HUGEPAGE*/, -1, 0);
-	if(unlikely(segment_head == MAP_FAILED)){
-	    	puts("allocate_segment: map failed");
-	    	exit(1);
-   	}
+	segment_head = (char*)mmap_hugepage(segment_size);
    	((Segment*)segment_head) -> next = (Segment*)old_segment_head;
-   	((Segment*)segment_head) -> id = ++segment_id;
    	((Segment*)segment_head) -> start_offset = segment_start_offset;
    	uninitialized_block_head = segment_head + segment_start_offset;
 }
@@ -56,11 +52,7 @@ void * Huge_allocator::allocate(size_t size){
 	// this function will not be called when another thread is using this allocator, so we don't call acquire()
 	
 	size = (size+segment_start_offset+PAGE_SIZE-1) & ~(PAGE_SIZE-1);
-	Huge_mem *buf = (Huge_mem*)mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | 0x40000 /*HUGEPAGE*/, -1, 0);
-	if(unlikely(buf == MAP_FAILED)){
-	    	puts("map failed");
-	    	exit(1);
-   	}
+	Huge_mem *buf = (Huge_mem*)mmap_hugepage(size);
    	buf->size = size;
    	buf->nxt = head.nxt;
    	buf->pre = &head;
@@ -122,7 +114,7 @@ Allocator::Allocator(int _offset)
 			}
 		}
 		assert(segment_size);
-		new(sa + i) Small_allocator(block_size[i] - block_size_decrease, segment_size, _offset);
+		new(sa + i) Small_allocator(block_size[i] - block_size_decrease, segment_size, _offset, PAGE_SIZE);
 		/*
 			segment_size[] = {
 			0, 0, 0, 0, 0, 0, 1, 1, 

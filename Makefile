@@ -1,5 +1,5 @@
 LIST=localtest_server test1 test2 test3 selftest mttest
-WARNINGS=-Wall -Wextra -Wshadow -Wfatal-errors -Wno-unused-value
+WARNINGS=-Wall -Wextra -Wshadow -Wfatal-errors -Wno-unused
 
 all: $(LIST)
 

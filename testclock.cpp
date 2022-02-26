@@ -2,16 +2,22 @@
 #include <sys/syscall.h>
 #include "global.h"
 //#include "test.h"
+int first = 1;
 
 ull get_time_ns()
 {
 	struct timespec tm;
 	clock_gettime(CLOCK_MONOTONIC_RAW, &tm);
+	if(first) {
+		first = 0;
+		printf("%ld %ld\n", tm.tv_sec, tm.tv_nsec);
+	}
 	return tm.tv_sec * 1000000000ull + tm.tv_nsec;
 }
 
 int main()
 {
+	printf("sizeof(time_t) = %ld\n", sizeof(time_t));
 	static const ull tot = 1e8;
 	printf("%lld\n",tot);
 	

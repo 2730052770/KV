@@ -254,7 +254,7 @@ struct KVS{
 			__builtin_prefetch(first, 1, 0);
 			__builtin_prefetch((char*)first+64, 1, 0);
 			__builtin_prefetch((char*)first+128, 1, 0);
-			__builtin_prefetch((char*)first+192, 1, 0);
+			//__builtin_prefetch((char*)first+192, 1, 0);
 		}
 	}
 	

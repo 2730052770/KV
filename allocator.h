@@ -3,60 +3,90 @@
 
 #include "global.h"
 
+inline void* mmap_hugepage(size_t size) {
+	void *ret = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | 0x40000 /*HUGEPAGE*/, -1, 0);
+	if(unlikely(ret == MAP_FAILED)) {
+		puts("mmap failed");
+		exit(0);
+	}
+	return ret;
+}
+
 struct Segment {
 	Segment *next;
-	uint id;
 	uint start_offset;
 };
 
 struct Free_block {
-	Free_block *next;
-};
+	uc meta;
+	Free_block ** queue_entry;
+}__attribute__((packed));
 
 struct Small_allocator {
-	char* free_block_head;
 	char* uninitialized_block_head;
 	char* segment_head;
-	uint segment_id;
+	
+	Free_block ** queue_head;
+	Free_block ** queue_tail;
+	const size_t queue_segment_size;
+	
 	const size_t block_size;
 	const size_t segment_size;
 	const int segment_start_offset;
 	
 	Small_allocator();
 	
-	Small_allocator(size_t _block_size, size_t _segment_size, int _offset);
+	Small_allocator(size_t _block_size, size_t _segment_size, int _offset, size_t _queue_segment_size);
 	//Allocator(const Allocator & a);
 	
 	void allocate_segment();
 	
 	inline void prefetch() {
-		void * next_block = free_block_head ? free_block_head : uninitialized_block_head;
+		void * next_block = queue_head != queue_tail ? (void*)*queue_head : (void*)uninitialized_block_head;
+		// *queue_head can be an address of a Free_block or a queue_segment, however we don't care that
 		__builtin_prefetch(next_block, 1, 0); 
 	}
 	
 	inline void* allocate() {
 		if(unlikely(!segment_head)) allocate_segment();
-		char * ret;
-		if(free_block_head) {
-			ret = free_block_head;
-			free_block_head = (char *) ((Free_block*)free_block_head) -> next;
+			
+		Free_block * ret;
+		Free_block ** nxt_head;
+		retry:
+		if(queue_head != queue_tail) {
+			if(unlikely( ((ull)(queue_head+1) & (queue_segment_size-1)) == 0 )) {
+				nxt_head = (Free_block**) *queue_head;
+				munmap((void*)((ull)queue_head & ~(queue_segment_size-1)), queue_segment_size);
+				queue_head = nxt_head;
+			}
+			ret = *queue_head;
+			queue_head++;
+			if(unlikely(ret == NULL))
+				goto retry;
 		}
 		else { 
-			ret = uninitialized_block_head;
+			ret = (Free_block *)uninitialized_block_head;
 			uninitialized_block_head += block_size;
 			if(uninitialized_block_head - segment_head + block_size > segment_size) allocate_segment();
 		}
 		prefetch(); // is this useful?
-		*ret = 1;
+		ret->meta = 1;
 		return ret;
 	}
 	
 	inline void free(void *ptr) {
-		*(uc*)ptr = 0;
-	
-		char * old_free_block_head = free_block_head;
-		free_block_head = (char*)ptr;
-		((Free_block*) free_block_head) -> next = (Free_block*)old_free_block_head;
+		if(unlikely(!queue_head)) 
+			queue_head = queue_tail = (Free_block **)mmap_hugepage(queue_segment_size);
+
+		Free_block *free_block = (Free_block *)ptr;
+		free_block->meta = 0;
+		if(unlikely( ((ull)(queue_tail+1) & (queue_segment_size-1)) == 0 )) {
+			*queue_tail = (Free_block*) mmap_hugepage(queue_segment_size);
+			queue_tail = (Free_block**) *queue_tail;
+		}
+		free_block->queue_entry = queue_tail;
+		*queue_tail = free_block;
+		queue_tail ++;
 	}
 	
 	void shrink();//回收时先把空闲链表按照空闲块所在segment的标号sort一波，然后按标号倒序扫每个segment的非空闲块（用version判断非空闲）

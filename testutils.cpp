@@ -8,7 +8,7 @@ ull get_time_ns()
 {
 	struct timespec tm;
 	clock_gettime(CLOCK_MONOTONIC_RAW, &tm);
-	return tm.tv_sec * 1000000000ull + tm.tv_nsec;
+	return tm.tv_sec * 1000000000ull + tm.tv_nsec;// wrapped around every 585 years after starting up
 }
 
 uint STL_randuint() {

@@ -29,8 +29,8 @@ ull KVS::default_hash_function(char *st, char *ed)
 
 void KVS::init_allocator() {
 	new(&block_allocator) Allocator_pair();
-	new(&node_allocator) Small_allocator(sizeof(Node), PAGE_SIZE, sizeof(Node));
-	new(&table_allocator) Small_allocator(sizeof(Table), PAGE_SIZE, sizeof(Table));
+	new(&node_allocator) Small_allocator(sizeof(Node), PAGE_SIZE, sizeof(Node), PAGE_SIZE);
+	new(&table_allocator) Small_allocator(sizeof(Table), PAGE_SIZE, sizeof(Table), PAGE_SIZE);
 }
 
 void KVS::init_structure() {
