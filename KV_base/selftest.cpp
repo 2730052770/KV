@@ -25,6 +25,7 @@ uint (*solve_table[]) (uint, Query*) = {
 void uniform_test()
 {
 	uint num = 0, old = 0;
+	ull t_start = get_time_ns();
 	ull tp = get_time_ns(), tn, dt;
 	printf("PUT\n");
 	for(uint i = 0; i < nkey; i++) {
@@ -48,6 +49,8 @@ void uniform_test()
 			printf("%.2lf Mop/s\n", 1e3*(checkmask+1)/dt);
 		}
 	}
+	ull t_end = get_time_ns();
+	printf("TOTAL %.2lf Mop/s\n", 1e3*nkey/(t_end - t_start));
 	
 	
 	while(num) {
@@ -57,6 +60,8 @@ void uniform_test()
 	random_shuffle(k, k+nkey);
 	tp = get_time_ns();
 	
+	t_start = get_time_ns();
+
 	printf("GET\n");
 	for(uint i = 0; i < nkey; i++) {
 		q[num].req_type = REQ_GET;
@@ -83,6 +88,8 @@ void uniform_test()
 			printf("%.2lf Mop/s\n", 1e3*(checkmask+1)/dt);
 		}
 	}
+	t_end = get_time_ns();
+	printf("TOTAL %.2lf Mop/s\n", 1e3*nkey/(t_end - t_start));
 }
 
 void zipf_test()

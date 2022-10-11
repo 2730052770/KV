@@ -175,8 +175,8 @@ struct KVS{
 			for(uint id = 0; id < batch; id++) {
 				route[lv][id] = (Node*)entry[id];
 				Node *son = (Node*)entry[id];
-				__builtin_prefetch(son, 0, 0);
-				__builtin_prefetch((char*)son+64, 0, 0);//上面的prefetch远没有下面的重要
+				//__builtin_prefetch(son, 0, 0);
+				//__builtin_prefetch((char*)son+64, 0, 0);//上面的prefetch远没有下面的重要
 			}
 			
 			for(uint id = 0; id < batch; id++) { 
@@ -211,7 +211,7 @@ struct KVS{
 			Query *qy = q+id;
 			qy->old_block = (Block *)entry[id];
 			route[global_level][id] = (Node*)entry[id];
-			__builtin_prefetch(qy->old_block, 0, 0);
+			//__builtin_prefetch(qy->old_block, 0, 0);
 		}
 	}
 	

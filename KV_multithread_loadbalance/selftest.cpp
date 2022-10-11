@@ -60,8 +60,11 @@ void* myrun_put(void *workpos_ptr)
 	uint iter_time = 0, pre_iter_time = 0;
 	uint pre_req_id;
 	ull tp, tn;
+	ull t_start, t_end;
 
 	printf("PUT\n");
+	t_start = get_time_ns();
+
 	pre_req_id = 0;
 	tp = get_time_ns();
 	for(uint q_id = 0, req_id = 0; req_id < nput; q_id = (q_id+1==batch) ? 0 : q_id+1) {
@@ -106,6 +109,8 @@ void* myrun_put(void *workpos_ptr)
 			//printf("%.2lf\n", 1.0 * d_iter_time / delta_req_id);
 		}
 	}
+	t_end = get_time_ns();
+	printf("TOTAL %.2lf Mop/s\n", 1e3*nput/(t_end - t_start));
 	
 	return NULL;
 }
@@ -129,8 +134,12 @@ void* myrun_get(void* workpos_ptr)
 	uint iter_time = 0, pre_iter_time = 0;
 	uint pre_req_id;
 	ull tp, tn;
+	ull t_start, t_end;
 
 	printf("GET\n");
+	t_start = get_time_ns();
+
+
 	pre_req_id = 0;
 	tp = get_time_ns();
 	for(uint q_id = 0, req_id = 0; req_id < nput; q_id = (q_id+1==batch) ? 0 : q_id+1) {
@@ -177,6 +186,8 @@ void* myrun_get(void* workpos_ptr)
 			//printf("%.2lf\n", 1.0 * d_iter_time / delta_req_id);
 		}
 	}
+	t_end = get_time_ns();
+	printf("TOTAL %.2lf Mop/s\n", 1e3*nput/(t_end - t_start));
 	return NULL;
 }
 

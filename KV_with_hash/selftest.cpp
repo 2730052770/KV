@@ -25,7 +25,10 @@ void uniform_test()
 {
 	uint num = 0, old = 0;
 	ull tp = get_time_ns(), tn, dt;
+	ull t_start, t_end;
 	printf("PUT\n");
+	t_start = get_time_ns();
+
 	for(uint i = 0; i < nkey; i++) {
 		q[num].req_type = REQ_PUT;
 		q[num].resp_type = RESP_EMPTY;
@@ -47,6 +50,8 @@ void uniform_test()
 			printf("%.2lf Mop/s\n", 1e3*(checkmask+1)/dt);
 		}
 	}
+	t_end = get_time_ns();
+	printf("TOTAL %.2lf Mop/s\n", 1e3*nkey/(t_end - t_start));
 	
 	
 	while(num) {
@@ -57,6 +62,8 @@ void uniform_test()
 	tp = get_time_ns();
 	
 	printf("GET\n");
+	t_start = get_time_ns();
+
 	for(uint i = 0; i < nkey; i++) {
 		q[num].req_type = REQ_GET;
 		q[num].resp_type = RESP_EMPTY;
@@ -82,6 +89,8 @@ void uniform_test()
 			printf("%.2lf Mop/s\n", 1e3*(checkmask+1)/dt);
 		}
 	}
+	t_end = get_time_ns();
+	printf("TOTAL %.2lf Mop/s\n", 1e3*nkey/(t_end - t_start));
 }
 
 void zipf_test()

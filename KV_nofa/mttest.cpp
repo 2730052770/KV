@@ -43,7 +43,11 @@ void * run(void * arg)
 	
 	uint num = 0, old = 0;
 	ull tp = get_time_ns(), tn, dt;
+	ull t_start, t_end;
+
 	printf("PUT (nkeys = %d)\n", nput);
+	t_start = get_time_ns();
+
 	for(uint i = 0; i < nput; i++) {
 		q[num].req_type = REQ_PUT;
 		q[num].resp_type = RESP_EMPTY;
@@ -69,6 +73,9 @@ void * run(void * arg)
 		old = num = solve_table[num](kvs, old, q);// clear them all
 	}
 	printf("%d: finish\n", tid);
+
+	t_end = get_time_ns();
+	printf("TOTAL %.2lf Mop/s\n", 1e3*nput/(t_end - t_start));
 	
 	cnt++;
 	while(cnt != nthread);
@@ -77,6 +84,8 @@ void * run(void * arg)
 	tp = get_time_ns();
 	
 	printf("GET\n");
+	t_start = get_time_ns();
+
 	for(uint i = 0; i < nput; i++) {
 		q[num].req_type = REQ_GET;
 		q[num].resp_type = RESP_EMPTY;
@@ -96,6 +105,9 @@ void * run(void * arg)
 		}
 	}
 	printf("%d: finish\n", tid);
+
+	t_end = get_time_ns();
+	printf("TOTAL %.2lf Mop/s\n", 1e3*nput/(t_end - t_start));
 	return NULL;
 }
 
